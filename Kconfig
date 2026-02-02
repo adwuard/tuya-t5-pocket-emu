@@ -1,0 +1,32 @@
+##
+# @file Kconfig
+# @brief Game Boy Emulator App Configuration
+#/
+
+menu "Tuya T5 Pocket Game Boy Emulator Configuration"
+
+config APP_CONFIG
+    bool
+    default y
+    select ENABLE_LIBLVGL
+    select ENABLE_LVGL_LODEPNG
+
+    config ENABLE_GB_EMU
+        bool "Enable Game Boy Emulator"
+        default y
+        help
+            Enable the Game Boy emulator application
+
+    config GB_EMU_ROM_PATH
+        string "Default ROM path"
+        default "/sd/roms/gb"
+        help
+            Default path to Game Boy ROM files
+
+    config GB_EMU_SAVE_PATH
+        string "Default save path"
+        default "/sd/saves/gb"
+        help
+            Default path to save states and SRAM
+
+endmenu
