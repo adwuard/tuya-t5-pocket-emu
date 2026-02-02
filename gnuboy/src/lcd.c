@@ -525,8 +525,6 @@ void spr_scan()
 
 void lcd_begin()
 {
-    static int begin_debug_count = 0;
-
     if (fb.indexed) {
         if (rgb332)
             pal_set332();
@@ -537,34 +535,19 @@ void lcd_begin()
         scale--;
     vdest = fb.ptr + ((fb.w * fb.pelsize) >> 1) - (80 * fb.pelsize) * scale + ((fb.h >> 1) - 72 * scale) * fb.pitch;
     WY    = R_WY;
-
-    // Debug: Log vdest calculation
-    if (begin_debug_count < 3) {
-        PR_NOTICE("lcd_begin[%d]: fb.ptr=%p, vdest=%p, offset=%d, scale=%d, fb.w=%d, fb.h=%d, fb.pitch=%d",
-                  begin_debug_count, fb.ptr, vdest, (int)(vdest - fb.ptr), scale, fb.w, fb.h, fb.pitch);
-        begin_debug_count++;
-    }
 }
 
 void lcd_refreshline()
 {
     int        i;
     byte       scalebuf[160 * 4 * 4], *dest;
-    static int WL                  = 0;
-    static int refresh_debug_count = 0;
+    static int WL = 0;
 
     if (!fb.enabled)
         return;
 
     if (!(R_LCDC & 0x80))
         return; /* should not happen... */
-
-    // Debug: Log first few refresh calls to verify it's being called
-    if (refresh_debug_count < 5) {
-        PR_NOTICE("lcd_refreshline[%d]: L=%d, fb.ptr=%p, fb.pelsize=%d, PAL2[0]=0x%04X", refresh_debug_count, R_LY,
-                  fb.ptr, fb.pelsize, (fb.pelsize == 2) ? PAL2[0] : 0);
-        refresh_debug_count++;
-    }
 
     updatepatpix();
 
@@ -747,16 +730,12 @@ static void updatepalette(int i)
         return;
     }
 
-    // Convert 8-bit RGB back to RGB565 format
-    // Pipeline: lcd.pal[] (RGB565) -> expanded to 8-bit RGB -> convert back to RGB565 -> PAL2[] -> refresh_2() ->
-    // framebuffer This MUST match the conversion in pal_write_dmg() and checkerboard pattern exactly
+    // Convert 8-bit RGB back to RGB565 format (must match pal_write_dmg() conversion)
     if (fb.pelsize == 2) {
-        // RGB565 format: use EXACT same conversion as pal_write_dmg() and checkerboard
-        // r, g, b are 8-bit (0-255) after expansion from RGB565
-        // Convert back to RGB565 using same formula: ((r>>3)<<11) | ((g>>2)<<5) | (b>>3)
-        r = (r >> 3) << 11; // Red: 8-bit -> 5-bit -> position 11 (matches pal_write_dmg)
-        g = (g >> 2) << 5;  // Green: 8-bit -> 6-bit -> position 5 (matches pal_write_dmg)
-        b = (b >> 3) << 0;  // Blue: 8-bit -> 5-bit -> position 0 (matches pal_write_dmg)
+        // RGB565: (r>>3)<<11 | (g>>2)<<5 | (b>>3)
+        r = (r >> 3) << 11;
+        g = (g >> 2) << 5;
+        b = (b >> 3) << 0;
         c = r | g | b;
     } else {
         // Use framebuffer color component shifts for other formats
@@ -803,39 +782,19 @@ void pal_write_dmg(int i, int mapnum, byte d)
 
     /* if (mapnum >= 2) d = 0xe4; */
     for (j = 0; j < 8; j += 2) {
-        // Extract 24-bit color from DMG palette
-        // IMPORTANT: Colors are in reversed order: 0xBBGGRR (not 0xRRGGBB)!
-        // For 0xffffff: BB=0xff (byte 2), GG=0xff (byte 1), RR=0xff (byte 0) = white
-        // For 0x000000: BB=0x00 (byte 2), GG=0x00 (byte 1), RR=0x00 (byte 0) = black
+        // Extract 24-bit color from DMG palette (format: 0xBBGGRR)
         c = cmap[(d >> j) & 3];
 
         // Extract RGB components from 0xBBGGRR format
-        r = (c & 0x0000ff);       // Red: bits 0-7 (LSB, byte 0)
-        g = (c & 0x00ff00) >> 8;  // Green: bits 8-15 (byte 1)
-        b = (c & 0xff0000) >> 16; // Blue: bits 16-23 (MSB, byte 2)
+        r = (c & 0x0000ff);       // Red: bits 0-7
+        g = (c & 0x00ff00) >> 8;  // Green: bits 8-15
+        b = (c & 0xff0000) >> 16; // Blue: bits 16-23
 
         // Convert to RGB565 format: RRRRR GGGGGG BBBBB (5-6-5 bits)
-        // This MUST match exactly the format used in the checkerboard test pattern
-        // Pipeline: 24-bit color (0xBBGGRR) -> RGB565 -> stored in lcd.pal[] -> updatepalette() -> PAL2[] ->
-        // refresh_2() -> framebuffer Checkerboard uses: Black = 0x0000, White = 0xFFFF (direct RGB565 values) RGB565
-        // bit layout: [15:11]=R(5 bits), [10:5]=G(6 bits), [4:0]=B(5 bits)
-        //
-        // Conversion formula (MUST match updatepalette() and checkerboard):
-        // - Red:   (r >> 3) << 11  [8-bit -> 5-bit -> position 11]
-        // - Green: (g >> 2) << 5   [8-bit -> 6-bit -> position 5]
-        // - Blue:  (b >> 3) << 0   [8-bit -> 5-bit -> position 0]
-        //
-        // For white (0xff, 0xff, 0xff):
-        //   (0xff>>3)<<11 | (0xff>>2)<<5 | (0xff>>3)
-        //   = (31<<11) | (63<<5) | 31
-        //   = 0xF800 | 0x07E0 | 0x001F = 0xFFFF ✓
-        //
-        // For black (0x00, 0x00, 0x00):
-        //   (0>>3)<<11 | (0>>2)<<5 | (0>>3) = 0x0000 ✓
+        // Must match updatepalette() conversion: (r>>3)<<11 | (g>>2)<<5 | (b>>3)
         rgb565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 
-        // Store as 16-bit RGB565 value in lcd.pal[] (little-endian: low byte, high byte)
-        // updatepalette() will read this as: lcd.pal[i<<1] | (lcd.pal[(i<<1)|1] << 8)
+        // Store as 16-bit RGB565 value in lcd.pal[] (little-endian)
         pal_write(i + j, rgb565 & 0xff);            // Low byte
         pal_write(i + j + 1, (rgb565 >> 8) & 0xff); // High byte
     }
@@ -867,25 +826,6 @@ void pal_dirty()
     }
     for (i = 0; i < 64; i++)
         updatepalette(i);
-
-    // Debug: Log palette values for first 4 entries (DMG has 4 shades)
-    static int pal_debug_count = 0;
-    if (pal_debug_count < 3) {
-        extern struct scan scan;
-        PR_NOTICE("pal_dirty[%d]: PAL2[0-3]=0x%04X 0x%04X 0x%04X 0x%04X, R_BGP=0x%02X", pal_debug_count, scan.pal2[0],
-                  scan.pal2[1], scan.pal2[2], scan.pal2[3], R_BGP);
-        PR_NOTICE("  Expected: PAL2[0-2]=0xFFFF (white), PAL2[3]=0x0000 (black)");
-        PR_NOTICE("  lcd.pal[0-7]=0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X", lcd.pal[0], lcd.pal[1],
-                  lcd.pal[2], lcd.pal[3], lcd.pal[4], lcd.pal[5], lcd.pal[6], lcd.pal[7]);
-        // Verify: For white (0xFFFF), lcd.pal should be [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, ...]
-        // For black (0x0000), lcd.pal should be [..., 0x00, 0x00]
-        if (scan.pal2[0] == 0xFFFF && scan.pal2[1] == 0xFFFF && scan.pal2[2] == 0xFFFF && scan.pal2[3] == 0x0000) {
-            PR_NOTICE("  ✓ Palette conversion correct!");
-        } else {
-            PR_WARN("  ✗ Palette conversion incorrect - check RGB565 conversion");
-        }
-        pal_debug_count++;
-    }
 }
 
 void lcd_reset()

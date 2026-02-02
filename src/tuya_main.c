@@ -121,10 +121,7 @@ void user_main(void)
     if (ret != OPRT_OK) {
         PR_ERR("Failed to auto-load ROM: %d", ret);
     } else {
-        PR_NOTICE("ROM loaded successfully, waiting 5 seconds before starting emulator...");
-        // Wait 5 seconds to allow test pattern to be visible
-        tal_system_sleep(5000);
-        PR_NOTICE("Starting emulator...");
+        PR_NOTICE("ROM loaded successfully, starting emulator...");
     }
 
     // Show ROM browser (disabled)

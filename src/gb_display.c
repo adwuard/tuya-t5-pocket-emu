@@ -133,23 +133,7 @@ void gb_display_update(void)
 
     // Verify framebuffer pointer is correct
     if (fb.ptr != (byte *)canvas_buffer) {
-        PR_WARN("gb_display_update: fb.ptr mismatch! fb.ptr=%p, canvas_buffer=%p", fb.ptr, canvas_buffer);
-        // Fix it - ensure fb.ptr points to canvas_buffer
         fb.ptr = (byte *)canvas_buffer;
-    }
-
-    // Debug: Sample framebuffer data to verify it's being written
-    static int update_debug_count = 0;
-    if (update_debug_count < 5 && fb.ptr != NULL) {
-        uint16_t *fb_data = (uint16_t *)fb.ptr;
-        uint16_t  sample[4];
-        sample[0] = fb_data[0];
-        sample[1] = fb_data[GB_WIDTH * GB_HEIGHT / 2];
-        sample[2] = fb_data[GB_WIDTH * GB_HEIGHT - 1];
-        sample[3] = fb_data[GB_WIDTH * 72]; // Middle of screen
-        PR_NOTICE("gb_display_update[%d]: canvas_buffer samples: 0x%04X 0x%04X 0x%04X 0x%04X", update_debug_count,
-                  sample[0], sample[1], sample[2], sample[3]);
-        update_debug_count++;
     }
 
     // The canvas buffer is already set up with lv_canvas_set_buffer
@@ -216,31 +200,6 @@ void vid_init(void)
 
     PR_NOTICE("vid_init: Framebuffer initialized (ptr=%p, size=%dx%d, pelsize=%d, RGB565)", fb.ptr, fb.w, fb.h,
               fb.pelsize);
-
-    // Debug: Fill framebuffer with RGB565 test pattern to verify display and color conversion
-    // This will be overwritten by the first frame, but helps verify the display path
-    uint16_t *test_fb = (uint16_t *)fb.ptr;
-
-    // Simple black/white checkerboard pattern
-    // RGB565: Black = 0x0000, White = 0xFFFF
-    for (int y = 0; y < fb.h; y++) {
-        for (int x = 0; x < fb.w; x++) {
-            // Create checkerboard pattern: alternate black and white every 16 pixels
-            uint16_t color        = ((x / 16) + (y / 16)) % 2 ? 0xFFFF : 0x0000;
-            test_fb[y * fb.w + x] = color;
-        }
-    }
-    PR_NOTICE("vid_init: Black/white checkerboard test pattern written to framebuffer");
-
-    // Invalidate canvas to display the test pattern
-    extern lv_obj_t *gb_canvas;
-    if (gb_canvas != NULL) {
-        lv_vendor_disp_lock();
-        lv_obj_invalidate(gb_canvas);
-        lv_refr_now(lv_disp_get_default());
-        lv_vendor_disp_unlock();
-        PR_NOTICE("vid_init: Test pattern displayed on canvas");
-    }
 }
 
 void vid_close(void)
@@ -266,21 +225,6 @@ void vid_end(void)
     // In SDL2, this copies the framebuffer to the texture
     // In our case, gnuboy writes directly to canvas_buffer (via fb.ptr)
     // So we just need to invalidate the canvas to trigger redraw
-
-    // Debug: Check if framebuffer has been written to
-    static int frame_debug_count = 0;
-    if (frame_debug_count < 5 && fb.ptr != NULL) {
-        uint16_t *fb_data = (uint16_t *)fb.ptr;
-        uint16_t  sample[4];
-        sample[0] = fb_data[0];
-        sample[1] = fb_data[GB_WIDTH * GB_HEIGHT / 2];
-        sample[2] = fb_data[GB_WIDTH * GB_HEIGHT - 1];
-        sample[3] = fb_data[GB_WIDTH * 72]; // Middle of screen
-        PR_NOTICE("vid_end[%d]: fb samples: 0x%04X 0x%04X 0x%04X 0x%04X", frame_debug_count, sample[0], sample[1],
-                  sample[2], sample[3]);
-        frame_debug_count++;
-    }
-
     gb_display_update();
 }
 
