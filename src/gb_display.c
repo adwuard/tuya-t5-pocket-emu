@@ -7,6 +7,8 @@
 
 #include "tuya_cloud_types.h"
 #include "tal_api.h"
+#include "tal_semaphore.h"
+#include "tal_thread.h"
 #include "lv_vendor.h"
 #include "gb_display.h"
 
@@ -32,6 +34,14 @@ lv_obj_t   *gb_canvas           = NULL; // Made non-static so browser can hide/s
 lv_obj_t   *gb_container        = NULL; // Container with border for the canvas
 lv_color_t *canvas_buffer       = NULL; // Made non-static so emulator can recreate canvas
 static bool display_initialized = false;
+
+// Display thread and semaphore for async display updates
+static THREAD_HANDLE display_thread         = NULL;
+static SEM_HANDLE    display_sem            = NULL;
+static bool          display_thread_running = false;
+
+// Forward declaration
+static void display_thread_func(void *arg);
 
 // GNUBoy framebuffer structure (defined here, declared extern in fb.h)
 struct fb fb;
@@ -102,8 +112,38 @@ OPERATE_RET gb_display_init(void)
     // Align canvas to center of container (border will be visible around it)
     lv_obj_align(gb_canvas, LV_ALIGN_CENTER, 0, 0);
 
+    // Create semaphore for display updates (initial count 0, max count 1)
+    OPERATE_RET ret = tal_semaphore_create_init(&display_sem, 0, 1);
+    if (ret != OPRT_OK) {
+        PR_ERR("Failed to create display semaphore: %d", ret);
+        lv_obj_del(gb_canvas);
+        lv_obj_del(gb_container);
+        tal_free(canvas_buffer);
+        canvas_buffer = NULL;
+        return ret;
+    }
+
+    // Create display thread
+    display_thread_running  = true;
+    THREAD_CFG_T thrd_param = {0};
+    thrd_param.stackDepth   = 1024 * 8;      // 8KB stack for display thread (LVGL needs more stack)
+    thrd_param.priority     = THREAD_PRIO_2; // Lower priority than main emulator thread
+    thrd_param.thrdname     = "gb_display";
+
+    ret = tal_thread_create_and_start(&display_thread, NULL, NULL, display_thread_func, NULL, &thrd_param);
+    if (ret != OPRT_OK) {
+        PR_ERR("Failed to create display thread: %d", ret);
+        tal_semaphore_release(display_sem);
+        display_sem = NULL;
+        lv_obj_del(gb_canvas);
+        lv_obj_del(gb_container);
+        tal_free(canvas_buffer);
+        canvas_buffer = NULL;
+        return ret;
+    }
+
     display_initialized = true;
-    PR_NOTICE("GB display initialized");
+    PR_NOTICE("GB display initialized with display thread");
 
     return OPRT_OK;
 }
@@ -115,6 +155,26 @@ void gb_display_deinit(void)
 {
     if (!display_initialized) {
         return;
+    }
+
+    // Stop display thread
+    if (display_thread_running) {
+        display_thread_running = false;
+        // Signal semaphore to wake up thread so it can exit
+        if (display_sem != NULL) {
+            tal_semaphore_post(display_sem);
+        }
+        // Wait for thread to exit
+        if (display_thread != NULL) {
+            tal_thread_delete(display_thread);
+            display_thread = NULL;
+        }
+    }
+
+    // Release semaphore
+    if (display_sem != NULL) {
+        tal_semaphore_release(display_sem);
+        display_sem = NULL;
     }
 
     if (gb_canvas) {
@@ -137,9 +197,9 @@ void gb_display_deinit(void)
 }
 
 /**
- * @brief Update display with new frame
+ * @brief Update display with new frame (internal, called from display thread)
  */
-void gb_display_update(void)
+static void gb_display_update_internal(void)
 {
     if (!display_initialized || !gb_canvas || !canvas_buffer) {
         return;
@@ -187,6 +247,46 @@ void gb_display_update(void)
     lv_refr_now(lv_disp_get_default());
 
     lv_vendor_disp_unlock();
+}
+
+/**
+ * @brief Update display with new frame (public API - signals display thread)
+ */
+void gb_display_update(void)
+{
+    // Signal the display thread to update (non-blocking)
+    if (display_sem != NULL) {
+        tal_semaphore_post(display_sem);
+    }
+}
+
+/**
+ * @brief Display thread function - waits for semaphore and updates display
+ */
+static void display_thread_func(void *arg)
+{
+    (void)arg;
+
+    PR_NOTICE("Display thread started");
+
+    while (display_thread_running) {
+        // Wait for display update signal (blocking wait)
+        OPERATE_RET ret = tal_semaphore_wait(display_sem, SEM_WAIT_FOREVER);
+        if (ret != OPRT_OK) {
+            PR_ERR("Display thread: semaphore wait failed: %d", ret);
+            continue;
+        }
+
+        // Check if we should still be running
+        if (!display_thread_running) {
+            break;
+        }
+
+        // Update the display
+        gb_display_update_internal();
+    }
+
+    PR_NOTICE("Display thread exiting");
 }
 
 /**
@@ -259,10 +359,9 @@ void vid_begin(void)
 
 void vid_end(void)
 {
-    // End frame rendering - update display
-    // In SDL2, this copies the framebuffer to the texture
-    // In our case, gnuboy writes directly to canvas_buffer (via fb.ptr)
-    // So we just need to invalidate the canvas to trigger redraw
+    // End frame rendering - signal display thread to update (non-blocking)
+    // The display thread will handle the actual LVGL update asynchronously
+    // This prevents blocking the main emulator loop
     gb_display_update();
 }
 
