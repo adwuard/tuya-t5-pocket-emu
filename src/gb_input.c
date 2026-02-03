@@ -92,8 +92,6 @@ static void calibrate_adc_center(void)
     INT32_T     min_x = 999999, max_x = 0;
     INT32_T     min_y = 999999, max_y = 0;
 
-    PR_NOTICE("Calibrating ADC center position (taking %d samples)...", CALIBRATION_SAMPLES);
-
     // Take multiple samples and average them, also track min/max
     // Note: Channels are swapped - X (LEFT/RIGHT) uses channel 14, Y (UP/DOWN) uses channel 15
     for (int i = 0; i < CALIBRATION_SAMPLES; i++) {
@@ -131,9 +129,6 @@ static void calibrate_adc_center(void)
         adc_min_y      = min_y;
         adc_max_y      = max_y;
         adc_calibrated = true;
-        PR_NOTICE("ADC calibrated: X center=%d (range %d-%d), Y center=%d (range %d-%d) (from %d/%d samples)",
-                  adc_center_x, adc_min_x, adc_max_x, adc_center_y, adc_min_y, adc_max_y, valid_samples_x,
-                  valid_samples_y);
     } else {
         // Fallback to observed midpoint if calibration fails
         adc_center_x   = 4200; // Typical midpoint from user observation
@@ -143,7 +138,6 @@ static void calibrate_adc_center(void)
         adc_min_y      = 1700;
         adc_max_y      = 6900;
         adc_calibrated = true;
-        PR_WARN("ADC calibration failed, using default: X=%d Y=%d (range 1700-6900)", adc_center_x, adc_center_y);
     }
 }
 
@@ -170,14 +164,12 @@ static void read_joystick_adc(int16_t *x, int16_t *y, INT32_T *raw_x, INT32_T *r
             // Out of expected range, clamp to calibrated center
             adc_x = adc_center_x;
             if (error_count_x++ < 3) {
-                PR_WARN("ADC X out of range: %d (using center %d)", adc_buf_x[0], adc_center_x);
             }
         }
     } else {
         // Read failed, use calibrated center
         adc_x = adc_center_x;
         if (error_count_x++ < 3) {
-            PR_WARN("ADC X read failed: ret=%d (using center %d)", ret, adc_center_x);
         }
     }
 
@@ -192,14 +184,12 @@ static void read_joystick_adc(int16_t *x, int16_t *y, INT32_T *raw_x, INT32_T *r
             // Out of expected range, clamp to calibrated center
             adc_y = adc_center_y;
             if (error_count_y++ < 3) {
-                PR_WARN("ADC Y out of range: %d (using center %d)", adc_buf_y[0], adc_center_y);
             }
         }
     } else {
         // Read failed, use calibrated center
         adc_y = adc_center_y;
         if (error_count_y++ < 3) {
-            PR_WARN("ADC Y read failed: ret=%d (using center %d)", ret, adc_center_y);
         }
     }
 
@@ -296,26 +286,13 @@ static uint8_t map_input_to_gb(void)
     if (btn_start)
         buttons |= BUTTON_START;
 
-    // Debug: Print raw and detected input events only when button states actually change
-    // Format: RAW: ADC_X=xxxx ADC_Y=yyyy BTN_A=x BTN_B=x BTN_SEL=x BTN_START=x | DETECTED: buttons=0xXX
-    // Only log when button state changes (not on every ADC reading)
-    // Note: Don't update previous_buttons here - let update_gnuboy_input() handle it
-    if (buttons != previous_buttons) {
-        PR_NOTICE("INPUT: RAW ADC_X=%d ADC_Y=%d BTN_A=%d BTN_B=%d BTN_SEL=%d BTN_START=%d | DETECTED: buttons=0x%02X "
-                  "(U=%d D=%d L=%d R=%d A=%d B=%d SEL=%d START=%d)",
-                  raw_adc_x, raw_adc_y, btn_a, btn_b, btn_sel, btn_start, buttons, !!(buttons & BUTTON_UP),
-                  !!(buttons & BUTTON_DOWN), !!(buttons & BUTTON_LEFT), !!(buttons & BUTTON_RIGHT),
-                  !!(buttons & BUTTON_A), !!(buttons & BUTTON_B), !!(buttons & BUTTON_SELECT),
-                  !!(buttons & BUTTON_START));
-
-        // Update last values to prevent duplicate logging (but NOT previous_buttons - that's for update_gnuboy_input)
-        last_raw_adc_x = raw_adc_x;
-        last_raw_adc_y = raw_adc_y;
-        last_btn_a     = btn_a;
-        last_btn_b     = btn_b;
-        last_btn_sel   = btn_sel;
-        last_btn_start = btn_start;
-    }
+    // Update last values for change detection
+    last_raw_adc_x = raw_adc_x;
+    last_raw_adc_y = raw_adc_y;
+    last_btn_a     = btn_a;
+    last_btn_b     = btn_b;
+    last_btn_sel   = btn_sel;
+    last_btn_start = btn_start;
 
     return buttons;
 }
@@ -392,8 +369,6 @@ OPERATE_RET gb_input_init(void)
         return OPRT_OK;
     }
 
-    PR_NOTICE("Initializing GB input...");
-
     // Initialize ADC for joystick channels
     // Match board initialization pattern exactly (from tuya_t5ai_pocket.c)
     // The board uses CONTINUOUS mode, so we'll use the same
@@ -414,8 +389,6 @@ OPERATE_RET gb_input_init(void)
         PR_ERR("ADC initialization failed: %d", ret);
         return ret;
     }
-    PR_NOTICE("ADC initialized: mode=CONTINUOUS, ch_list=0x%x, channels X=%d Y=%d", adc_cfg.ch_list.data,
-              JOYSTICK_ADC_CH_X, JOYSTICK_ADC_CH_Y);
 
     // Calibrate ADC center position dynamically after initialization
     calibrate_adc_center();
@@ -463,8 +436,6 @@ OPERATE_RET gb_input_init(void)
     memset(keystates, 0, sizeof(keystates));
 
     input_initialized = true;
-    PR_NOTICE("GB input initialized (ADC + GPIO)");
-
     return OPRT_OK;
 }
 
@@ -491,7 +462,6 @@ void gb_input_deinit(void)
     kb_close();
 
     input_initialized = false;
-    PR_NOTICE("GB input deinitialized");
 }
 
 /**

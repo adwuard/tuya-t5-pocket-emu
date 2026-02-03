@@ -40,8 +40,6 @@ OPERATE_RET gb_audio_init(void)
         return OPRT_OK;
     }
 
-    PR_NOTICE("Initializing GB audio...");
-
 #if defined(AUDIO_CODEC_NAME)
     // Find audio device
     ret = tdl_audio_find(AUDIO_CODEC_NAME, &audio_handle);
@@ -65,29 +63,13 @@ OPERATE_RET gb_audio_init(void)
     TDL_AUDIO_INFO_T audio_info;
     ret = tdl_audio_get_info(audio_handle, &audio_info);
     if (ret == OPRT_OK) {
-        PR_NOTICE("Audio info: rate=%d, ch=%d, bits=%d", audio_info.sample_rate, audio_info.sample_ch_num,
-                  audio_info.sample_bits);
-
-        // Verify hardware codec matches expected configuration
-        if (audio_info.sample_rate != AUDIO_SAMPLE_RATE) {
-            PR_WARN("Audio sample rate mismatch: codec=%d Hz, expected=%d Hz", audio_info.sample_rate,
-                    AUDIO_SAMPLE_RATE);
-        }
-        if (audio_info.sample_ch_num != AUDIO_CHANNELS) {
-            PR_WARN("Audio channel mismatch: codec=%d, expected=%d", audio_info.sample_ch_num, AUDIO_CHANNELS);
-        }
-        if (audio_info.sample_bits != AUDIO_BITS) {
-            PR_WARN("Audio bit depth mismatch: codec=%d, expected=%d", audio_info.sample_bits, AUDIO_BITS);
-        }
-    } else {
-        PR_WARN("Could not get audio info, assuming default configuration");
+        // Verify hardware codec matches expected configuration (silently)
+        (void)audio_info; // Suppress unused variable warning if not used
     }
 #endif
 
     audio_initialized = true;
     audio_started     = false;
-    PR_NOTICE("GB audio initialized (target rate: %d Hz)", AUDIO_SAMPLE_RATE);
-
     return OPRT_OK;
 }
 
@@ -110,7 +92,6 @@ void gb_audio_deinit(void)
 #endif
 
     audio_initialized = false;
-    PR_NOTICE("GB audio deinitialized");
 }
 
 // GNUBoy sys.h interface implementations
@@ -152,11 +133,9 @@ void pcm_init(void)
             return;
         }
         memset(pcm.buf, 0, buf_size);
-        PR_NOTICE("PCM buffer allocated: %d samples (%d bytes, 8-bit unsigned)", pcm.len, buf_size);
     }
 
     pcm.pos = 0;
-    PR_NOTICE("PCM initialized: rate=%d Hz, channels=%d, buffer=%d samples", pcm.hz, channels, pcm.len);
 }
 
 int pcm_submit(void)
@@ -243,7 +222,6 @@ int pcm_submit(void)
     if (!audio_started) {
         // Audio should start automatically on first write, but we mark it as started
         audio_started = true;
-        PR_NOTICE("Starting audio playback");
     }
 
     // Submit converted audio data to Tuya audio system

@@ -36,8 +36,6 @@ OPERATE_RET gb_save_init(const char *rom_path)
         return OPRT_INVALID_PARM;
     }
 
-    PR_NOTICE("Initializing save state system for: %s", rom_path);
-
     // Create save directory if it doesn't exist
     tkl_fs_mkdir(SAVE_DIR_PATH);
 
@@ -55,9 +53,6 @@ OPERATE_RET gb_save_init(const char *rom_path)
         return OPRT_MALLOC_FAILED;
     }
     strcpy(savedir, SAVE_DIR_PATH);
-
-    PR_NOTICE("Save state system initialized (save dir: %s)", SAVE_DIR_PATH);
-
     return OPRT_OK;
 }
 
@@ -71,13 +66,9 @@ OPERATE_RET gb_save_state(int slot)
         return OPRT_INVALID_PARM;
     }
 
-    PR_NOTICE("Saving state to slot %d", slot);
-
     // Use gnuboy's state_save function
     // It will use saveprefix set by loader_init
     state_save(slot);
-
-    PR_NOTICE("State saved successfully");
     return OPRT_OK;
 }
 
@@ -91,12 +82,8 @@ OPERATE_RET gb_load_state(int slot)
         return OPRT_INVALID_PARM;
     }
 
-    PR_NOTICE("Loading state from slot %d", slot);
-
     // Use gnuboy's state_load function
     state_load(slot);
-
-    PR_NOTICE("State loaded successfully");
     return OPRT_OK;
 }
 
@@ -105,12 +92,9 @@ OPERATE_RET gb_load_state(int slot)
  */
 OPERATE_RET gb_save_sram(void)
 {
-    PR_NOTICE("Saving SRAM...");
-
     // Use gnuboy's sram_save function
     int ret = sram_save();
     if (ret == 0) {
-        PR_NOTICE("SRAM saved successfully");
         return OPRT_OK;
     } else {
         PR_ERR("SRAM save failed");
@@ -123,12 +107,9 @@ OPERATE_RET gb_save_sram(void)
  */
 OPERATE_RET gb_load_sram(void)
 {
-    PR_NOTICE("Loading SRAM...");
-
     // Use gnuboy's sram_load function
     int ret = sram_load();
     if (ret == 0) {
-        PR_NOTICE("SRAM loaded successfully");
         return OPRT_OK;
     } else {
         PR_ERR("SRAM load failed (may not exist)");

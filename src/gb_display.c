@@ -56,8 +56,6 @@ OPERATE_RET gb_display_init(void)
         return OPRT_OK;
     }
 
-    PR_NOTICE("Initializing GB display...");
-
     // LVGL should already be initialized, but verify
     lv_obj_t *scr = lv_scr_act();
     if (scr == NULL) {
@@ -143,8 +141,6 @@ OPERATE_RET gb_display_init(void)
     }
 
     display_initialized = true;
-    PR_NOTICE("GB display initialized with display thread");
-
     return OPRT_OK;
 }
 
@@ -193,7 +189,6 @@ void gb_display_deinit(void)
     }
 
     display_initialized = false;
-    PR_NOTICE("GB display deinitialized");
 }
 
 /**
@@ -273,8 +268,6 @@ static void display_thread_func(void *arg)
 {
     (void)arg;
 
-    PR_NOTICE("Display thread started");
-
     while (display_thread_running) {
         // Wait for display update signal (blocking wait)
         OPERATE_RET ret = tal_semaphore_wait(display_sem, SEM_WAIT_FOREVER);
@@ -291,8 +284,6 @@ static void display_thread_func(void *arg)
         // Update the display
         gb_display_update_internal();
     }
-
-    PR_NOTICE("Display thread exiting");
 }
 
 /**
@@ -341,9 +332,6 @@ void vid_init(void)
 
     fb.enabled = 1;
     fb.dirty   = 0;
-
-    PR_NOTICE("vid_init: Framebuffer initialized (ptr=%p, size=%dx%d, pelsize=%d, RGB565)", fb.ptr, fb.w, fb.h,
-              fb.pelsize);
 }
 
 void vid_close(void)
@@ -359,7 +347,6 @@ void vid_begin(void)
     // Ensure fb.ptr is set correctly (it should already be set in vid_init(), but verify)
     if (fb.ptr == NULL && canvas_buffer != NULL) {
         fb.ptr = (byte *)canvas_buffer;
-        PR_WARN("vid_begin: fb.ptr was NULL, resetting to canvas_buffer");
     }
 }
 
@@ -396,5 +383,4 @@ void vid_fullscreen_toggle(void)
 void vid_screenshot(void)
 {
     // TODO: Implement screenshot functionality
-    PR_NOTICE("Screenshot requested (not implemented)");
 }

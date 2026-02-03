@@ -61,7 +61,6 @@ void user_main(void)
 
     // Initialize LVGL FIRST (before SD card mounting)
     // This ensures display is ready before any UI operations
-    PR_NOTICE("Initializing LVGL...");
 #ifdef DISPLAY_NAME
     lv_vendor_init(DISPLAY_NAME);
 #else
@@ -77,11 +76,7 @@ void user_main(void)
         return;
     }
 
-    PR_NOTICE("Game Boy Emulator ready");
-
     // Mount SD card first (required before loading ROM)
-    PR_NOTICE("Mounting SD card...");
-
     // Configure SDIO pins (required before mounting)
     tkl_io_pinmux_config(TUYA_GPIO_NUM_14, TUYA_SDIO_HOST_CLK);
     tkl_io_pinmux_config(TUYA_GPIO_NUM_15, TUYA_SDIO_HOST_CMD);
@@ -89,7 +84,6 @@ void user_main(void)
     tkl_io_pinmux_config(TUYA_GPIO_NUM_17, TUYA_SDIO_HOST_D1);
     tkl_io_pinmux_config(TUYA_GPIO_NUM_18, TUYA_SDIO_HOST_D2);
     tkl_io_pinmux_config(TUYA_GPIO_NUM_19, TUYA_SDIO_HOST_D3);
-    PR_NOTICE("SDIO pins configured");
 
     ret = tkl_fs_mount("/sdcard", DEV_SDCARD);
     if (ret != OPRT_OK) {
@@ -97,7 +91,6 @@ void user_main(void)
         PR_ERR("Cannot load ROM without SD card");
         return;
     }
-    PR_NOTICE("SD card mounted successfully");
 
     // DIR *roms_dir = opendir("/sdcard/roms");
     // if (roms_dir) {
@@ -134,8 +127,6 @@ void user_main(void)
             // Check if user selected a ROM (check this first, before browser input)
             char *selected_rom = gb_browser_get_selected();
             if (selected_rom) {
-                PR_NOTICE("ROM selected: %s", selected_rom);
-
                 // Clean up browser UI properly before loading ROM
                 extern void gb_browser_cleanup_for_emu(void);
                 gb_browser_cleanup_for_emu();
@@ -148,8 +139,6 @@ void user_main(void)
                     PR_ERR("Failed to load ROM: %d", ret);
                     // Show browser again if ROM load failed
                     gb_browser_show();
-                } else {
-                    PR_NOTICE("ROM loaded successfully, starting emulator...");
                 }
 
                 tal_free(selected_rom);

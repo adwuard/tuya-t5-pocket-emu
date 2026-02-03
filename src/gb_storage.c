@@ -17,13 +17,8 @@
  */
 OPERATE_RET gb_storage_init(void)
 {
-    PR_NOTICE("Initializing GB storage...");
-
     // Initialize system paths
     sys_initpath();
-
-    PR_NOTICE("GB storage initialized");
-
     return OPRT_OK;
 }
 
@@ -32,7 +27,6 @@ OPERATE_RET gb_storage_init(void)
  */
 void gb_storage_deinit(void)
 {
-    PR_NOTICE("GB storage deinitialized");
 }
 
 // GNUBoy sys.h interface implementations

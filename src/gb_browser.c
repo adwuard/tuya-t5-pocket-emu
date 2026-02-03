@@ -166,7 +166,6 @@ static int scan_rom_files(const char *dir_path)
     while (tkl_dir_read(dir, &info) == 0 && count < MAX_FILES) { // 0 = success
         // Check if info is valid before using it
         if (info == NULL) {
-            PR_WARN("tkl_dir_read returned NULL info");
             break; // End of directory or error
         }
 
@@ -211,8 +210,6 @@ static int scan_rom_files(const char *dir_path)
 
     tkl_dir_close(dir);
     browser.file_count = count;
-
-    PR_NOTICE("Found %d ROM files in %s", count, dir_path);
     return count;
 }
 
@@ -472,10 +469,7 @@ static void create_browser_ui(void)
         browser.list = NULL;
     }
 
-    // Note: LVGL runs in its own thread, so we don't need to call lv_task_handler() here
-    // The LVGL thread will automatically process the UI updates
     lv_vendor_disp_unlock();
-    PR_NOTICE("Browser UI created successfully");
 }
 
 /**
@@ -541,8 +535,6 @@ OPERATE_RET gb_browser_init(void)
         return OPRT_OK;
     }
 
-    PR_NOTICE("Initializing SD card browser...");
-
     // Configure SDIO pins (from tuya_t5ai_pocket.c)
     // Note: These pins are also used for buttons, but SDIO needs them configured first
     // The board_register_hardware() should have already configured them, but we ensure it here
@@ -553,8 +545,6 @@ OPERATE_RET gb_browser_init(void)
     tkl_io_pinmux_config(TUYA_GPIO_NUM_18, TUYA_SDIO_HOST_D2);
     tkl_io_pinmux_config(TUYA_GPIO_NUM_19, TUYA_SDIO_HOST_D3);
 
-    PR_NOTICE("SDIO pins configured");
-
     // Mount SD card
     ret = tkl_fs_mount(SDCARD_MOUNT_PATH, DEV_SDCARD);
     if (ret != OPRT_OK) {
@@ -563,7 +553,6 @@ OPERATE_RET gb_browser_init(void)
     }
 
     browser.sd_mounted = true;
-    PR_NOTICE("SD card mounted successfully");
 
     // Create ROM directory if it doesn't exist
     // Check if directory exists first
@@ -577,8 +566,6 @@ OPERATE_RET gb_browser_init(void)
     }
 
     browser.initialized = true;
-    PR_NOTICE("SD card browser initialized");
-
     return OPRT_OK;
 }
 
@@ -616,8 +603,6 @@ void gb_browser_deinit(void)
     if (browser.screen != NULL) {
         cleanup_browser_ui();
     }
-
-    PR_NOTICE("SD card browser deinitialized");
 }
 
 /**
@@ -634,12 +619,9 @@ void gb_browser_show(void)
     tal_system_sleep(50);
 
     // Scan for ROM files
-    PR_NOTICE("Scanning for ROM files...");
     int file_count = scan_rom_files(ROM_DIR_PATH);
-    PR_NOTICE("Scan complete: found %d ROM files", file_count);
 
     if (file_count == 0) {
-        PR_WARN("No ROM files found in %s", ROM_DIR_PATH);
         // Don't return - show empty browser UI so user knows the system is working
         // The UI will show a message
     }
@@ -649,17 +631,13 @@ void gb_browser_show(void)
     browser.selected_index = 0;
 
     // Wait a bit before creating UI to ensure everything is stable
-    PR_NOTICE("Waiting before UI creation...");
     tal_system_sleep(200);
 
     // Wait a bit to ensure display is ready
-    // Note: LVGL runs in its own thread, so we don't need to call lv_task_handler() here
     tal_system_sleep(50);
 
     // Create UI
-    PR_NOTICE("Starting UI creation...");
     create_browser_ui();
-    PR_NOTICE("UI creation complete");
 }
 
 /**
@@ -727,7 +705,6 @@ void gb_browser_cleanup_for_emu(void)
         return;
     }
 
-    PR_NOTICE("Cleaning up browser UI for emulator...");
     browser.state = BROWSER_STATE_TRANSITIONING;
 
     // Clean up browser UI
@@ -759,5 +736,4 @@ void gb_browser_cleanup_for_emu(void)
     tal_system_sleep(200);
 
     browser.state = BROWSER_STATE_IDLE;
-    PR_NOTICE("Browser cleanup complete");
 }

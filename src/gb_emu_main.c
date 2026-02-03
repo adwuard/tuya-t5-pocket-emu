@@ -51,8 +51,6 @@ OPERATE_RET gb_emu_init(void)
 {
     OPERATE_RET ret = OPRT_OK;
 
-    PR_NOTICE("Initializing Game Boy Emulator...");
-
     // Initialize display
     ret = gb_display_init();
     if (ret != OPRT_OK) {
@@ -97,8 +95,6 @@ OPERATE_RET gb_emu_init(void)
     // Initialize I/O (like SDL2-GNUBoy's emu_init())
     // emu_init();
 
-    PR_NOTICE("Game Boy Emulator initialized successfully");
-
     return OPRT_OK;
 }
 
@@ -112,13 +108,8 @@ OPERATE_RET gb_emu_load_rom(const char *rom_path)
         return OPRT_INVALID_PARM;
     }
 
-    PR_NOTICE("Loading ROM: %s", rom_path);
-
     // Initialize save state system
-    OPERATE_RET ret = gb_save_init(rom_path);
-    if (ret != OPRT_OK) {
-        PR_WARN("Save state init failed, continuing anyway");
-    }
+    (void)gb_save_init(rom_path); // Ignore errors, continue anyway
 
     // Free previous ROM path if exists
     if (current_rom_path) {
@@ -133,17 +124,12 @@ OPERATE_RET gb_emu_load_rom(const char *rom_path)
 
     // Load ROM using gnuboy loader (following SDL2-GNUBoy sequence)
     // SDL2 sequence: vid_init() -> pcm_init() -> loader_init() -> emu_reset() -> emu_run()
-    PR_NOTICE("Calling loader_init...");
     loader_init((char *)rom_path);
-    // Note: loader_init doesn't return error, so we assume success
-    PR_NOTICE("loader_init completed");
 
     // Reset emulator state after loading ROM (required by gnuboy)
     // This initializes CPU, LCD, MBC, sound, I/O, and memory mapping
     // Following SDL2-GNUBoy: emu_reset() is called AFTER loader_init()
-    PR_NOTICE("Calling emu_reset...");
     emu_reset();
-    PR_NOTICE("emu_reset completed");
 
     // Make sure canvas is visible on main screen
     extern lv_obj_t *gb_canvas;
@@ -170,8 +156,6 @@ OPERATE_RET gb_emu_load_rom(const char *rom_path)
 
         // Give LVGL time to process the changes
         tal_system_sleep(100);
-
-        PR_NOTICE("Canvas and container made visible");
     } else {
         PR_ERR("Canvas or container is NULL - display may not be initialized");
     }
@@ -186,9 +170,6 @@ OPERATE_RET gb_emu_load_rom(const char *rom_path)
 
     // Mark emulator as running now that ROM is loaded
     gb_emu_running = true;
-
-    PR_NOTICE("ROM loaded successfully");
-
     return OPRT_OK;
 }
 
@@ -252,7 +233,6 @@ void gb_emu_run(void)
  */
 void gb_emu_stop(void)
 {
-    PR_NOTICE("Stopping Game Boy emulator...");
     gb_emu_running = false;
 }
 
@@ -261,7 +241,6 @@ void gb_emu_stop(void)
  */
 void gb_emu_reset(void)
 {
-    PR_NOTICE("Resetting Game Boy emulator...");
     emu_reset();
 }
 
@@ -270,8 +249,6 @@ void gb_emu_reset(void)
  */
 void gb_emu_deinit(void)
 {
-    PR_NOTICE("Deinitializing Game Boy emulator...");
-
     gb_emu_running = false;
 
     // Close gnuboy systems
@@ -289,8 +266,6 @@ void gb_emu_deinit(void)
         tal_free(current_rom_path);
         current_rom_path = NULL;
     }
-
-    PR_NOTICE("Game Boy emulator deinitialized");
 }
 
 /**
