@@ -16,6 +16,9 @@ list(REMOVE_ITEM APP_SRCS ${APP_PATH}/src/display/CMakeLists.txt)
 # Remove display subdirectory (handled separately)
 list(REMOVE_ITEM APP_SRCS ${APP_PATH}/src/display)
 
+# Font sources (Terminus TTF Bold fonts)
+aux_source_directory(${APP_PATH}/src/fonts FONT_SRCS)
+
 # GNUBoy core sources
 aux_source_directory(${APP_PATH}/gnuboy/src GNUBOY_SRCS)
 # Remove files we don't need to save space
@@ -47,7 +50,7 @@ list(REMOVE_ITEM SYS_SRCS
 list(APPEND SYS_SRCS ${APP_PATH}/gnuboy/sys/nix/nix_tuya.c)
 
 # Combine all sources
-list(APPEND APP_SRCS ${GNUBOY_SRCS} ${GZ_SRCS} ${XZ_SRCS} ${SYS_SRCS})
+list(APPEND APP_SRCS ${GNUBOY_SRCS} ${GZ_SRCS} ${XZ_SRCS} ${SYS_SRCS} ${FONT_SRCS})
 
 set(APP_INC 
     ${APP_PATH}/include
@@ -79,9 +82,3 @@ target_compile_options(${EXAMPLE_LIB}
         "-DRG_TARGET_TUYA_T5_POCKET"
         "-std=c99"
     )
-
-########################################
-# Add subdirectory
-########################################
-
-add_subdirectory(${APP_PATH}/src/display)

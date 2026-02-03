@@ -296,11 +296,11 @@ static uint8_t map_input_to_gb(void)
     if (btn_start)
         buttons |= BUTTON_START;
 
-    // Debug: Print raw and detected input events only when values change (one-liner format)
+    // Debug: Print raw and detected input events only when button states actually change
     // Format: RAW: ADC_X=xxxx ADC_Y=yyyy BTN_A=x BTN_B=x BTN_SEL=x BTN_START=x | DETECTED: buttons=0xXX
-    // Only log when UDLR button state changes (on events for up/down/left/right)
-    if (((buttons ^ previous_buttons) & (BUTTON_UP | BUTTON_DOWN | BUTTON_LEFT | BUTTON_RIGHT)) ||
-        btn_a != last_btn_a || btn_b != last_btn_b || btn_sel != last_btn_sel || btn_start != last_btn_start) {
+    // Only log when button state changes (not on every ADC reading)
+    // Note: Don't update previous_buttons here - let update_gnuboy_input() handle it
+    if (buttons != previous_buttons) {
         PR_NOTICE("INPUT: RAW ADC_X=%d ADC_Y=%d BTN_A=%d BTN_B=%d BTN_SEL=%d BTN_START=%d | DETECTED: buttons=0x%02X "
                   "(U=%d D=%d L=%d R=%d A=%d B=%d SEL=%d START=%d)",
                   raw_adc_x, raw_adc_y, btn_a, btn_b, btn_sel, btn_start, buttons, !!(buttons & BUTTON_UP),
@@ -308,7 +308,7 @@ static uint8_t map_input_to_gb(void)
                   !!(buttons & BUTTON_A), !!(buttons & BUTTON_B), !!(buttons & BUTTON_SELECT),
                   !!(buttons & BUTTON_START));
 
-        // Update last values
+        // Update last values to prevent duplicate logging (but NOT previous_buttons - that's for update_gnuboy_input)
         last_raw_adc_x = raw_adc_x;
         last_raw_adc_y = raw_adc_y;
         last_btn_a     = btn_a;
@@ -323,6 +323,7 @@ static uint8_t map_input_to_gb(void)
 /**
  * @brief Update GNUBoy input states by posting events to event queue
  * This matches SDL2 behavior: ev_poll() posts events, emulator processes them via ev_getevent()
+ * Note: This should only be called when browser is not active
  */
 static void update_gnuboy_input(uint8_t buttons)
 {
@@ -330,6 +331,7 @@ static void update_gnuboy_input(uint8_t buttons)
     uint8_t changed = buttons ^ previous_buttons;
 
     // Post events for changed buttons (like SDL2 does)
+    // Browser reads keystates[] directly, so we still update it for browser use
     // D-pad directions
     if (changed & BUTTON_UP) {
         ev.type = (buttons & BUTTON_UP) ? EV_PRESS : EV_RELEASE;
@@ -504,8 +506,25 @@ void gb_input_poll(void)
     // Read current button states
     current_buttons = map_input_to_gb();
 
-    // Update GNUBoy input system
-    update_gnuboy_input(current_buttons);
+    // Only post events to emulator if browser is not active
+    // Browser takes control of input when active
+    extern bool gb_browser_is_active(void);
+    if (!gb_browser_is_active()) {
+        // Update GNUBoy input system (posts events to emulator)
+        update_gnuboy_input(current_buttons);
+    } else {
+        // Browser is active - still update keystates[] for browser use
+        // but don't post events to emulator
+        extern char keystates[MAX_KEYS];
+        keystates[K_JOYUP]    = (current_buttons & BUTTON_UP) ? 1 : 0;
+        keystates[K_JOYDOWN]  = (current_buttons & BUTTON_DOWN) ? 1 : 0;
+        keystates[K_JOYLEFT]  = (current_buttons & BUTTON_LEFT) ? 1 : 0;
+        keystates[K_JOYRIGHT] = (current_buttons & BUTTON_RIGHT) ? 1 : 0;
+        keystates[K_JOY0]     = (current_buttons & BUTTON_SELECT) ? 1 : 0;
+        keystates[K_JOY1]     = (current_buttons & BUTTON_B) ? 1 : 0;
+        keystates[K_JOY2]     = (current_buttons & BUTTON_A) ? 1 : 0;
+        keystates[K_JOY3]     = (current_buttons & BUTTON_START) ? 1 : 0;
+    }
 
     // Poll GNUBoy input system
     kb_poll();

@@ -81,6 +81,10 @@ OPERATE_RET gb_emu_init(void)
         return ret;
     }
 
+    // Initialize browser (SD card will be mounted in tuya_main.c before calling gb_browser_show())
+    // Note: Browser initialization is done in tuya_main.c after SD card is mounted
+    // We don't initialize it here to avoid duplicate SD card mounting
+
     // Initialize gnuboy system (following SDL2-GNUBoy sequence)
     // Note: vid_preinit() is called early (before video init)
     vid_preinit();
@@ -129,26 +133,44 @@ OPERATE_RET gb_emu_load_rom(const char *rom_path)
 
     // Load ROM using gnuboy loader (following SDL2-GNUBoy sequence)
     // SDL2 sequence: vid_init() -> pcm_init() -> loader_init() -> emu_reset() -> emu_run()
+    PR_NOTICE("Calling loader_init...");
     loader_init((char *)rom_path);
     // Note: loader_init doesn't return error, so we assume success
+    PR_NOTICE("loader_init completed");
 
     // Reset emulator state after loading ROM (required by gnuboy)
     // This initializes CPU, LCD, MBC, sound, I/O, and memory mapping
     // Following SDL2-GNUBoy: emu_reset() is called AFTER loader_init()
+    PR_NOTICE("Calling emu_reset...");
     emu_reset();
+    PR_NOTICE("emu_reset completed");
 
-    // Browser is disabled, so canvas should already exist from gb_display_init()
-    // Just make sure it's visible
+    // Make sure canvas is visible on main screen
     extern lv_obj_t *gb_canvas;
     extern lv_obj_t *gb_container;
     if (gb_container != NULL && gb_canvas != NULL) {
         lv_vendor_disp_lock();
+
+        // Ensure we're on the main screen (not browser screen)
+        lv_obj_t *scr = lv_scr_act();
+        if (scr != NULL && gb_container && lv_obj_get_parent(gb_container) != scr) {
+            lv_obj_set_parent(gb_container, scr);
+        }
+
         lv_obj_clear_flag(gb_container, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(gb_canvas, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(gb_container); // Bring container (and canvas) to front
-        // Note: LVGL runs in its own thread, so we don't need to call lv_task_handler() here
-        // Just unlock and let LVGL thread handle the rendering
+
+        // Ensure container is properly sized and positioned
+        // Border: 3px width, 2px gap = total 2*(3+2) = 10px per side
+        lv_obj_align(gb_container, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_set_size(gb_container, GB_WIDTH + 10, GB_HEIGHT + 10);
+
         lv_vendor_disp_unlock();
+
+        // Give LVGL time to process the changes
+        tal_system_sleep(100);
+
         PR_NOTICE("Canvas and container made visible");
     } else {
         PR_ERR("Canvas or container is NULL - display may not be initialized");
@@ -200,8 +222,9 @@ void gb_emu_run(void)
     sound_mix();
     pcm_submit();
 
-    // Poll input and process events (equivalent to doevents() in SDL2-GNUBoy)
-    // doevents() calls ev_poll() to post events, then processes them via ev_getevent()
+    // Process events (equivalent to doevents() in SDL2-GNUBoy)
+    // Note: Input polling is done in main loop before browser/emulator check
+    // doevents() processes events from the queue (posted by ev_poll() in main loop)
     doevents();
 
     // Begin next frame

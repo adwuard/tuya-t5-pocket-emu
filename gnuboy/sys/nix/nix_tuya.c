@@ -75,15 +75,13 @@ void *sys_timer(void)
 // are already implemented in gb_storage.c
 
 // Event handling - matches SDL2 behavior
+// Note: ev_poll() is called in main loop, so we only process events here
 void doevents(void)
 {
     event_t ev;
     int     st;
 
-    // Poll for events (this calls ev_poll() which posts events to the queue)
-    ev_poll();
-
-    // Process all events from the queue
+    // Process all events from the queue (events were already posted by ev_poll() in main loop)
     while (ev_getevent(&ev)) {
         if (ev.type != EV_PRESS && ev.type != EV_RELEASE)
             continue;

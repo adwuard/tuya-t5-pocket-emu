@@ -20,6 +20,17 @@
 #include <string.h>
 #include <stdlib.h>
 
+// External font declarations (fonts are compiled from src/fonts/)
+extern const lv_font_t lv_font_terminusTTF_Bold_14;
+extern const lv_font_t lv_font_terminusTTF_Bold_16;
+extern const lv_font_t lv_font_terminusTTF_Bold_18;
+
+// Font definitions for browser UI (screen-optimized Terminus TTF Bold)
+#define BROWSER_TITLE_FONT   &lv_font_terminusTTF_Bold_18
+#define BROWSER_LIST_FONT    &lv_font_terminusTTF_Bold_14
+#define BROWSER_COUNTER_FONT &lv_font_terminusTTF_Bold_14
+#define BROWSER_INSTR_FONT   &lv_font_terminusTTF_Bold_14
+
 #define SDCARD_MOUNT_PATH "/sdcard"
 #define ROM_DIR_PATH      "/sdcard/roms"
 #define MAX_FILES         100
@@ -30,31 +41,47 @@
 #define DISP_WIDTH  384
 #define DISP_HEIGHT 168
 
+// Black and white color scheme only
+#define GB_COLOR_BG_DARK  lv_color_black()             // Black background
+#define GB_COLOR_BG_LIGHT lv_color_make(240, 240, 240) // Light gray background
+#define GB_COLOR_TEXT     lv_color_black()             // Black text
+#define GB_COLOR_TEXT_DIM lv_color_black()             // Black text (same)
+#define GB_COLOR_SELECTED lv_color_white()             // White for selected
+#define GB_COLOR_BORDER   lv_color_black()             // Black border
+
 // ROM file extensions
 #define ROM_EXT_GB  ".gb"
 #define ROM_EXT_GBC ".gbc"
 
-// Browser state
+// Browser state machine
+typedef enum {
+    BROWSER_STATE_IDLE,
+    BROWSER_STATE_ACTIVE,
+    BROWSER_STATE_LOADING_ROM,
+    BROWSER_STATE_TRANSITIONING
+} browser_state_e;
+
 typedef struct {
-    bool      initialized;
-    bool      active;
-    bool      sd_mounted;
-    lv_obj_t *list;
-    lv_obj_t *label_title;
-    char     *file_paths[MAX_FILES];
-    char     *file_names[MAX_FILES];
-    int       file_count;
-    int       selected_index;
-    int       scroll_offset;
-    bool      input_handled;
-    uint32_t  last_input_time;
+    browser_state_e state;
+    bool            initialized;
+    bool            sd_mounted;
+    lv_obj_t       *list;
+    lv_obj_t       *label_title;
+    lv_obj_t       *label_counter; // File counter (e.g., "1/10")
+    lv_obj_t       *screen;        // Browser screen object
+    char           *file_paths[MAX_FILES];
+    char           *file_names[MAX_FILES];
+    int             file_count;
+    int             selected_index;
+    bool            input_handled;
+    uint32_t        last_input_time;
 } browser_state_t;
 
 static browser_state_t browser = {0};
 
 // Input handling
-#define INPUT_REPEAT_DELAY_MS 200
-#define INPUT_DEBOUNCE_MS     50
+#define INPUT_REPEAT_DELAY_MS 400 // Slower key repeat for browser (was 200ms)
+#define INPUT_DEBOUNCE_MS     100 // Longer debounce for browser (was 50ms)
 
 static uint32_t last_up_time     = 0;
 static uint32_t last_down_time   = 0;
@@ -190,65 +217,126 @@ static int scan_rom_files(const char *dir_path)
 }
 
 /**
- * @brief Update list widget with file names
+ * @brief Update list widget with file names (enhanced with retro styling)
  */
 static void update_list_widget(void)
 {
-    if (browser.list == NULL) {
+    if (browser.list == NULL || browser.state != BROWSER_STATE_ACTIVE) {
         return;
     }
+
+    // Use display lock for thread safety
+    lv_vendor_disp_lock();
 
     // Clear existing items
     lv_obj_clean(browser.list);
 
-    // Calculate how many items can fit on screen
-    // With 384px height: title (25px) + instructions (20px) + margins (15px) = ~324px for list
-    // Each list item is roughly 20-25px, so we can show about 12-15 items
-    int items_per_screen = 12;
-    int start_idx        = browser.scroll_offset;
-    int end_idx          = start_idx + items_per_screen;
-    if (end_idx > browser.file_count) {
-        end_idx = browser.file_count;
-    }
-
-    // Add file names to list
-    for (int i = start_idx; i < end_idx; i++) {
+    // Add all file names to list (enable scrolling)
+    for (int i = 0; i < browser.file_count; i++) {
         if (browser.file_names[i]) {
+            // Create button text without icons (just filename)
+            char button_text[128];
+            snprintf(button_text, sizeof(button_text), "%s", browser.file_names[i]);
+
             // LVGL v9 uses lv_list_add_button
-            lv_obj_t *item = lv_list_add_button(browser.list, NULL, browser.file_names[i]);
+            lv_obj_t *item = lv_list_add_button(browser.list, NULL, button_text);
             if (item == NULL) {
                 PR_ERR("Failed to add list item %d", i);
                 continue;
             }
-            // Style the list item for better spacing
-            lv_obj_set_style_pad_all(item, 3, 0);
+
+            // Base styling for all items
+            lv_obj_set_style_pad_all(item, 4, 0);
+            lv_obj_set_style_pad_bottom(item, 5, 0); // 5px spacing between rows
+            lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_text_color(item, lv_color_black(), 0); // Black text for unselected
+            // Apply Terminus TTF Bold 14px font to all list items
+            lv_obj_set_style_text_font(item, BROWSER_LIST_FONT, 0);
+            // Add 2px letter spacing for all items
+            lv_obj_set_style_text_letter_space(item, 2, 0);
 
             if (i == browser.selected_index) {
+                // Selected item styling - black background, white text
                 lv_obj_add_state(item, LV_STATE_FOCUSED);
-                // Make selected item more visible with background
+
+                // White text for selected item
+                lv_obj_set_style_text_color(item, lv_color_white(), LV_STATE_FOCUSED);
+
+                // Black background with border
+                lv_obj_set_style_bg_color(item, lv_color_black(), LV_STATE_FOCUSED);
                 lv_obj_set_style_bg_opa(item, LV_OPA_COVER, LV_STATE_FOCUSED);
 
-                // Add border to highlight selected item
+                // Black border around selected item
                 lv_obj_set_style_border_width(item, 2, LV_STATE_FOCUSED);
-                lv_obj_set_style_border_color(item, lv_color_white(), LV_STATE_FOCUSED);
+                lv_obj_set_style_border_color(item, lv_color_black(), LV_STATE_FOCUSED);
+                lv_obj_set_style_border_side(item, LV_BORDER_SIDE_FULL, LV_STATE_FOCUSED);
 
-                // Add underline effect using a thicker bottom border on the button
-                // This is simpler and more reliable than accessing child labels
-                lv_obj_set_style_border_side(item, LV_BORDER_SIDE_BOTTOM, LV_STATE_FOCUSED);
-                lv_obj_set_style_border_width(item, 3, LV_STATE_FOCUSED); // Thicker bottom border for underline
+                // Slight padding increase for selected
+                lv_obj_set_style_pad_all(item, 6, LV_STATE_FOCUSED);
+                // Font is already set in base styling, but ensure it's applied to focused state too
+                lv_obj_set_style_text_font(item, BROWSER_LIST_FONT, LV_STATE_FOCUSED);
+                // Letter spacing for selected item
+                lv_obj_set_style_text_letter_space(item, 2, LV_STATE_FOCUSED);
             }
         }
     }
 
-    // Update scroll position to keep selected item visible
-    if (browser.selected_index >= browser.scroll_offset + items_per_screen) {
-        browser.scroll_offset = browser.selected_index - items_per_screen + 1;
-        if (browser.scroll_offset < 0) {
-            browser.scroll_offset = 0;
-        }
-    } else if (browser.selected_index < browser.scroll_offset) {
-        browser.scroll_offset = browser.selected_index;
+    // Update file counter
+    if (browser.label_counter != NULL && browser.file_count > 0) {
+        char counter_text[32];
+        snprintf(counter_text, sizeof(counter_text), "%d/%d", browser.selected_index + 1, browser.file_count);
+        lv_label_set_text(browser.label_counter, counter_text);
     }
+
+    // Scroll to selected item to keep it visible (only if list exists)
+    if (browser.list != NULL && browser.selected_index < browser.file_count) {
+        // Get the selected item object
+        uint32_t item_cnt = lv_obj_get_child_cnt(browser.list);
+        if (browser.selected_index < item_cnt) {
+            lv_obj_t *selected_item = lv_obj_get_child(browser.list, browser.selected_index);
+            if (selected_item != NULL) {
+                // Scroll the list to make selected item visible with smooth animation
+                lv_obj_scroll_to_view(selected_item, LV_ANIM_ON);
+            }
+        }
+    }
+
+    lv_vendor_disp_unlock();
+}
+
+/**
+ * @brief Clean up browser UI
+ */
+static void cleanup_browser_ui(void)
+{
+    lv_vendor_disp_lock();
+
+    // Clean up browser UI objects (children will be deleted automatically)
+    if (browser.list != NULL) {
+        lv_obj_del(browser.list);
+        browser.list = NULL;
+    }
+
+    if (browser.label_title != NULL) {
+        lv_obj_del(browser.label_title);
+        browser.label_title = NULL;
+    }
+
+    if (browser.label_counter != NULL) {
+        lv_obj_del(browser.label_counter);
+        browser.label_counter = NULL;
+    }
+
+    // Delete browser screen (this will delete all children)
+    if (browser.screen != NULL) {
+        lv_obj_del(browser.screen);
+        browser.screen = NULL;
+    }
+
+    lv_vendor_disp_unlock();
+
+    // Give LVGL time to process cleanup
+    tal_system_sleep(100);
 }
 
 /**
@@ -256,46 +344,81 @@ static void update_list_widget(void)
  */
 static void create_browser_ui(void)
 {
-    lv_obj_t *scr = lv_scr_act();
-    if (scr == NULL) {
-        PR_ERR("Failed to get screen object");
-        return;
-    }
-    lv_obj_set_size(scr, DISP_WIDTH, DISP_HEIGHT);
-
     lv_vendor_disp_lock();
 
+    // Create a new screen for browser (don't use main screen)
+    browser.screen = lv_obj_create(NULL);
+    if (browser.screen == NULL) {
+        PR_ERR("Failed to create browser screen");
+        lv_vendor_disp_unlock();
+        return;
+    }
+
+    lv_obj_set_size(browser.screen, DISP_WIDTH, DISP_HEIGHT);
+
+    // Apply white background
+    lv_obj_set_style_bg_color(browser.screen, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(browser.screen, LV_OPA_COVER, 0);
+
+    lv_scr_load(browser.screen);
+
     // Hide GB canvas if it exists (we'll show it again when emulator runs)
-    // gb_canvas is defined in gb_display.c as non-static
-    extern lv_obj_t *gb_canvas; // From gb_display.c
+    extern lv_obj_t *gb_canvas;
+    extern lv_obj_t *gb_container;
+    if (gb_container != NULL) {
+        lv_obj_add_flag(gb_container, LV_OBJ_FLAG_HIDDEN);
+    }
     if (gb_canvas != NULL) {
         lv_obj_add_flag(gb_canvas, LV_OBJ_FLAG_HIDDEN);
     }
 
-    // Clear screen for browser UI
-    lv_obj_clean(scr);
+// Layout constants (enhanced spacing)
+#define TITLE_HEIGHT    24
+#define COUNTER_HEIGHT  16
+#define INSTR_HEIGHT    18
+#define LIST_MARGIN     8
+#define LIST_TOP_OFFSET (TITLE_HEIGHT + COUNTER_HEIGHT + 4)
+#define LIST_HEIGHT     (DISP_HEIGHT - LIST_TOP_OFFSET - INSTR_HEIGHT - 5)
 
-// Layout constants (following ebook_screen.c style)
-#define TITLE_HEIGHT    20
-#define INSTR_HEIGHT    20
-#define LIST_MARGIN     10
-#define LIST_TOP_OFFSET (TITLE_HEIGHT + 5)
-#define LIST_HEIGHT     (DISP_HEIGHT - LIST_TOP_OFFSET - INSTR_HEIGHT - 10)
-
-    // Create title label at top
-    browser.label_title = lv_label_create(scr);
+    // Create title as button-like with white bg and black text
+    browser.label_title = lv_label_create(browser.screen);
     if (browser.label_title == NULL) {
         PR_ERR("Failed to create title label");
         lv_vendor_disp_unlock();
         return;
     }
-    lv_label_set_text(browser.label_title, "Select ROM");
-    lv_obj_align(browser.label_title, LV_ALIGN_TOP_MID, 0, 5);
+    lv_label_set_text(browser.label_title, "GAME BOY ROM BROWSER");
+    lv_obj_align(browser.label_title, LV_ALIGN_TOP_MID, 0, 4);
     lv_obj_set_style_text_align(browser.label_title, LV_TEXT_ALIGN_CENTER, 0);
+    // Button-like styling: white background, black text with rounded edges
+    lv_obj_set_style_bg_color(browser.label_title, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(browser.label_title, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(browser.label_title, lv_color_black(), 0);
+    lv_obj_set_style_pad_all(browser.label_title, 4, 0);
+    lv_obj_set_style_border_width(browser.label_title, 2, 0);
+    lv_obj_set_style_border_color(browser.label_title, lv_color_black(), 0);
+    // Add rounded edges
+    lv_obj_set_style_radius(browser.label_title, 4, 0); // Small rounded corners (4px radius)
+    // Apply Terminus TTF Bold 18px font (screen-optimized)
+    lv_obj_set_style_text_font(browser.label_title, BROWSER_TITLE_FONT, 0);
+    // Add 2px letter spacing for better readability
+    lv_obj_set_style_text_letter_space(browser.label_title, 2, 0);
+
+    // Create file counter label (e.g., "1/10")
+    browser.label_counter = lv_label_create(browser.screen);
+    if (browser.label_counter != NULL) {
+        lv_label_set_text(browser.label_counter, "0/0");
+        lv_obj_align(browser.label_counter, LV_ALIGN_TOP_RIGHT, -8, TITLE_HEIGHT + 2);
+        lv_obj_set_style_text_color(browser.label_counter, lv_color_black(), 0);
+        // Apply Terminus TTF Bold 14px font
+        lv_obj_set_style_text_font(browser.label_counter, BROWSER_COUNTER_FONT, 0);
+        // Add 2px letter spacing
+        lv_obj_set_style_text_letter_space(browser.label_counter, 2, 0);
+    }
 
     // Create list widget with proper sizing for 384px display
     if (browser.file_count > 0) {
-        browser.list = lv_list_create(scr);
+        browser.list = lv_list_create(browser.screen);
         if (browser.list == NULL) {
             PR_ERR("Failed to create list widget");
             lv_vendor_disp_unlock();
@@ -304,27 +427,47 @@ static void create_browser_ui(void)
         // Size list to fill available space between title and instructions
         lv_obj_set_size(browser.list, DISP_WIDTH - 10, LIST_HEIGHT);
         lv_obj_align(browser.list, LV_ALIGN_TOP_MID, 0, LIST_TOP_OFFSET);
-        lv_obj_set_style_pad_all(browser.list, 5, 0);
-        lv_obj_set_style_pad_row(browser.list, 2, 0); // Row spacing between items
+        lv_obj_set_style_pad_all(browser.list, 1, 0);
+
+        // Enable scrolling on the list
+        lv_obj_set_scrollbar_mode(browser.list, LV_SCROLLBAR_MODE_AUTO);
+        lv_obj_set_scroll_dir(browser.list, LV_DIR_VER);
 
         // Update list with files
         update_list_widget();
 
         // Create instructions label at bottom
-        lv_obj_t *instr_label = lv_label_create(scr);
+        lv_obj_t *instr_label = lv_label_create(browser.screen);
         if (instr_label) {
-            lv_label_set_text(instr_label, "UP/DOWN: Navigate  SELECT: Choose");
-            lv_obj_align(instr_label, LV_ALIGN_BOTTOM_MID, 0, -5);
+            lv_label_set_text(instr_label, "UP/DOWN: Navigate | A: Select ");
+            lv_obj_align(instr_label, LV_ALIGN_BOTTOM_MID, 0, -4);
             lv_obj_set_style_text_align(instr_label, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_set_style_text_color(instr_label, lv_color_make(150, 150, 150), 0);
+            lv_obj_set_style_text_color(instr_label, lv_color_black(), 0);
+            // Apply Terminus TTF Bold 14px font
+            lv_obj_set_style_text_font(instr_label, BROWSER_INSTR_FONT, 0);
+            // Add 2px letter spacing
+            lv_obj_set_style_text_letter_space(instr_label, 2, 0);
         }
     } else {
-        // Show message if no ROMs found with better styling
-        lv_obj_t *msg_label = lv_label_create(scr);
+        // Show message if no ROMs found
+        lv_obj_t *msg_label = lv_label_create(browser.screen);
         if (msg_label) {
-            lv_label_set_text(msg_label, "No ROMs found!\n\nPlace .gb or .gbc files\nin /sdcard/roms/");
+            lv_label_set_text(msg_label,
+                              "NO ROMS FOUND\n\nPlace .gb or .gbc files\nin /sdcard/roms/\n\n[C] = Game Boy Color");
             lv_obj_align(msg_label, LV_ALIGN_CENTER, 0, 0);
             lv_obj_set_style_text_align(msg_label, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_style_text_color(msg_label, lv_color_black(), 0);
+            // Apply Terminus TTF Bold 14px font
+            lv_obj_set_style_text_font(msg_label, BROWSER_LIST_FONT, 0);
+            // Add 2px letter spacing
+            lv_obj_set_style_text_letter_space(msg_label, 2, 0);
+
+            // Add a subtle border/box around the message
+            lv_obj_set_style_bg_color(msg_label, lv_color_make(240, 240, 240), 0);
+            lv_obj_set_style_bg_opa(msg_label, LV_OPA_30, 0);
+            lv_obj_set_style_pad_all(msg_label, 12, 0);
+            lv_obj_set_style_border_width(msg_label, 2, 0);
+            lv_obj_set_style_border_color(msg_label, lv_color_black(), 0);
         }
         browser.list = NULL;
     }
@@ -340,7 +483,7 @@ static void create_browser_ui(void)
  */
 void gb_browser_handle_input(void)
 {
-    if (!browser.active) {
+    if (browser.state != BROWSER_STATE_ACTIVE) {
         return;
     }
 
@@ -361,6 +504,7 @@ void gb_browser_handle_input(void)
     // Handle DOWN (scroll down)
     if (keystates[K_JOYDOWN] && (now - last_down_time) > INPUT_REPEAT_DELAY_MS) {
         last_down_time = now;
+        // Stop at last item (don't go beyond)
         if (browser.selected_index < browser.file_count - 1) {
             browser.selected_index++;
             update_list_widget();
@@ -380,7 +524,7 @@ void gb_browser_handle_input(void)
     // Handle START/B (back/cancel)
     if (keystates[K_JOY3] && (now - last_back_time) > INPUT_DEBOUNCE_MS) {
         last_back_time = now;
-        browser.active = false;
+        browser.state  = BROWSER_STATE_IDLE;
     } else if (!keystates[K_JOY3]) {
         last_back_time = 0;
     }
@@ -466,7 +610,13 @@ void gb_browser_deinit(void)
     }
 
     browser.initialized = false;
-    browser.active      = false;
+    browser.state       = BROWSER_STATE_IDLE;
+
+    // Clean up UI if still active
+    if (browser.screen != NULL) {
+        cleanup_browser_ui();
+    }
+
     PR_NOTICE("SD card browser deinitialized");
 }
 
@@ -495,9 +645,8 @@ void gb_browser_show(void)
     }
 
     // Initialize browser state
-    browser.active         = true;
+    browser.state          = BROWSER_STATE_ACTIVE;
     browser.selected_index = 0;
-    browser.scroll_offset  = 0;
 
     // Wait a bit before creating UI to ensure everything is stable
     PR_NOTICE("Waiting before UI creation...");
@@ -518,7 +667,7 @@ void gb_browser_show(void)
  */
 char *gb_browser_get_selected(void)
 {
-    if (!browser.active) {
+    if (browser.state != BROWSER_STATE_ACTIVE) {
         return NULL;
     }
 
@@ -530,13 +679,14 @@ char *gb_browser_get_selected(void)
     if (keystates[K_JOY2] && (now - last_select_time) > INPUT_DEBOUNCE_MS) {
         last_select_time = now;
 
-        // User selected a ROM
+        // User selected a ROM - transition to loading state
         if (browser.selected_index >= 0 && browser.selected_index < browser.file_count) {
+            browser.state = BROWSER_STATE_LOADING_ROM;
+
             char *selected_path = (char *)tal_malloc(strlen(browser.file_paths[browser.selected_index]) + 1);
             if (selected_path) {
                 strcpy(selected_path, browser.file_paths[browser.selected_index]);
             }
-            browser.active = false;
             return selected_path;
         }
     } else if (!keystates[K_JOY2]) {
@@ -551,7 +701,7 @@ char *gb_browser_get_selected(void)
  */
 void gb_browser_update(void)
 {
-    if (!browser.active) {
+    if (browser.state != BROWSER_STATE_ACTIVE) {
         return;
     }
 
@@ -565,5 +715,49 @@ void gb_browser_update(void)
  */
 bool gb_browser_is_active(void)
 {
-    return browser.active;
+    return (browser.state == BROWSER_STATE_ACTIVE);
+}
+
+/**
+ * @brief Clean up browser and transition to emulator
+ */
+void gb_browser_cleanup_for_emu(void)
+{
+    if (browser.state == BROWSER_STATE_IDLE) {
+        return;
+    }
+
+    PR_NOTICE("Cleaning up browser UI for emulator...");
+    browser.state = BROWSER_STATE_TRANSITIONING;
+
+    // Clean up browser UI
+    cleanup_browser_ui();
+
+    // Switch back to main screen (where emulator canvas is)
+    lv_vendor_disp_lock();
+
+    // Get or create main screen
+    lv_obj_t *main_screen = lv_scr_act();
+    if (main_screen == NULL || main_screen == browser.screen) {
+        // Create new main screen
+        main_screen = lv_obj_create(NULL);
+        if (main_screen != NULL) {
+            lv_obj_set_size(main_screen, DISP_WIDTH, DISP_HEIGHT);
+            lv_scr_load(main_screen);
+        }
+    }
+
+    // Ensure GB container is on the main screen
+    extern lv_obj_t *gb_container;
+    if (gb_container != NULL && lv_obj_get_parent(gb_container) != main_screen) {
+        lv_obj_set_parent(gb_container, main_screen);
+    }
+
+    lv_vendor_disp_unlock();
+
+    // Give LVGL time to process screen switch and cleanup
+    tal_system_sleep(200);
+
+    browser.state = BROWSER_STATE_IDLE;
+    PR_NOTICE("Browser cleanup complete");
 }

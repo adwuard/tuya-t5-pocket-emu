@@ -42,6 +42,11 @@ void gb_browser_update(void);
 bool gb_browser_is_active(void);
 
 /**
+ * @brief Clean up browser and transition to emulator
+ */
+void gb_browser_cleanup_for_emu(void);
+
+/**
  * @brief Handle browser input (call from input poll)
  */
 void gb_browser_handle_input(void);

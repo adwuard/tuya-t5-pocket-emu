@@ -13,7 +13,7 @@
 #include "tkl_pinmux.h" // For SDIO pin configuration
 #include "lv_vendor.h"
 #include "gb_emu.h"
-// #include "gb_browser.h" // Browser disabled - auto-load ROM instead
+#include "gb_browser.h"
 #include "gb_input.h"
 
 #ifndef PROJECT_VERSION
@@ -114,68 +114,62 @@ void user_main(void)
     // Wait a bit for SD card to stabilize
     tal_system_sleep(200);
 
-    // Auto-load ROM on boot
-    // const char *rom_path = "/sdcard/roms/Mega_Man_V.gb";
-    // const char *rom_path = "/sdcard/roms/Kirbys_Dream_Land_2.gb";
-    // const char *rom_path = "/sdcard/roms/Legend_of_Zelda_The_Links_Awakening.gb";
-    // const char *rom_path = "/sdcard/roms/PocketRGB-EN_v1.0.1.gb";
-    const char *rom_path = "/sdcard/roms/Super_Mario_Land.gb";
-
-    PR_NOTICE("Auto-loading ROM: %s", rom_path);
-    ret = gb_emu_load_rom(rom_path);
+    // Initialize browser
+    ret = gb_browser_init();
     if (ret != OPRT_OK) {
-        PR_ERR("Failed to auto-load ROM: %d", ret);
-    } else {
-        PR_NOTICE("ROM loaded successfully, starting emulator...");
+        PR_ERR("Browser initialization failed: %d", ret);
+        return;
     }
 
-    // Show ROM browser (disabled)
-    // gb_browser_show();
+    // Show ROM browser first (user selects ROM)
+    gb_browser_show();
 
     // Main loop
     while (1) {
-        // Poll input
-        // gb_input_poll();
+        // Poll input first (updates keystates for both browser and emulator)
+        gb_input_poll();
 
-        // Browser disabled - ROM is auto-loaded on boot
-        // Check if user selected a ROM (check this first, before browser input)
-        // if (gb_browser_is_active()) {
-        //     char *selected_rom = gb_browser_get_selected();
-        //     if (selected_rom) {
-        //         PR_NOTICE("ROM selected: %s", selected_rom);
-        //         ret = gb_emu_load_rom(selected_rom);
-        //         if (ret != OPRT_OK) {
-        //             PR_ERR("Failed to load ROM: %d", ret);
-        //         } else {
-        //             // Hide browser UI after successful ROM load
-        //             // The browser will be deactivated by gb_browser_get_selected()
-        //             PR_NOTICE("Starting emulator...");
-        //         }
-        //
-        //         tal_free(selected_rom);
-        //         // Skip browser input handling this iteration since ROM was selected
-        //         // Continue to emulator run
-        //     } else {
-        //         // Handle browser input if no ROM selected
-        //         gb_browser_handle_input();
-        //         gb_browser_update();
-        //     }
-        // }
+        // Handle browser first (takes control of input before emulator)
+        if (gb_browser_is_active()) {
+            // Check if user selected a ROM (check this first, before browser input)
+            char *selected_rom = gb_browser_get_selected();
+            if (selected_rom) {
+                PR_NOTICE("ROM selected: %s", selected_rom);
+
+                // Clean up browser UI properly before loading ROM
+                extern void gb_browser_cleanup_for_emu(void);
+                gb_browser_cleanup_for_emu();
+
+                // Additional delay to ensure UI cleanup is complete
+                tal_system_sleep(100);
+
+                ret = gb_emu_load_rom(selected_rom);
+                if (ret != OPRT_OK) {
+                    PR_ERR("Failed to load ROM: %d", ret);
+                    // Show browser again if ROM load failed
+                    gb_browser_show();
+                } else {
+                    PR_NOTICE("ROM loaded successfully, starting emulator...");
+                }
+
+                tal_free(selected_rom);
+                // Skip browser input handling this iteration since ROM was selected
+                // Continue to emulator run
+            } else {
+                // Handle browser input if no ROM selected
+                gb_browser_handle_input();
+                gb_browser_update();
+            }
+        }
 
         // Run emulator if ROM is loaded (runs one frame per loop iteration)
-        // if (gb_emu_is_running()) {
-        //     static bool first_run = true;
-        //     if (first_run) {
-        //         PR_NOTICE("Starting emulator main loop...");
-        //         first_run = false;
-        //     }
-        gb_emu_run(); // Run one frame, then return to main loop
-        // }
-        // Browser disabled - no need to show browser if ROM not loaded
-        // else if (!gb_browser_is_active()) {
-        //     // If no ROM loaded and browser not active, show browser
-        //     gb_browser_show();
-        // }
+        // Only run if browser is not active (browser takes priority)
+        if (gb_emu_is_running() && !gb_browser_is_active()) {
+            gb_emu_run(); // Run one frame, then return to main loop
+        } else if (!gb_browser_is_active() && !gb_emu_is_running()) {
+            // If no ROM loaded and browser not active, show browser
+            gb_browser_show();
+        }
 
         // Note: LVGL runs in its own thread (created by lv_vendor_start())
         // We should NOT call lv_task_handler() manually - it's handled by the LVGL thread
@@ -213,7 +207,7 @@ static void tuya_app_thread(void *arg)
 void tuya_app_main(void)
 {
     THREAD_CFG_T thrd_param = {0};
-    thrd_param.stackDepth   = 1024 * 4;
+    thrd_param.stackDepth   = 1024 * 8; // 8KB stack (ROM loading needs more stack)
     thrd_param.priority     = THREAD_PRIO_1;
     thrd_param.thrdname     = "tuya_app_main";
     tal_thread_create_and_start(&ty_app_thread, NULL, NULL, tuya_app_thread, NULL, &thrd_param);

@@ -205,6 +205,12 @@ static void gb_display_update_internal(void)
         return;
     }
 
+    // Don't update display if browser is active (browser has its own screen)
+    extern bool gb_browser_is_active(void);
+    if (gb_browser_is_active()) {
+        return;
+    }
+
     // Use lv_vendor_disp_lock/unlock for thread safety (like tuya_t5_pocket_ai)
     lv_vendor_disp_lock();
 
