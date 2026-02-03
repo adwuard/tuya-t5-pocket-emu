@@ -115,7 +115,12 @@ void user_main(void)
     tal_system_sleep(200);
 
     // Auto-load ROM on boot
-    const char *rom_path = "/sdcard/roms/Mega_Man_V.gb";
+    // const char *rom_path = "/sdcard/roms/Mega_Man_V.gb";
+    // const char *rom_path = "/sdcard/roms/Kirbys_Dream_Land_2.gb";
+    // const char *rom_path = "/sdcard/roms/Legend_of_Zelda_The_Links_Awakening.gb";
+    // const char *rom_path = "/sdcard/roms/PocketRGB-EN_v1.0.1.gb";
+    const char *rom_path = "/sdcard/roms/Super_Mario_Land.gb";
+
     PR_NOTICE("Auto-loading ROM: %s", rom_path);
     ret = gb_emu_load_rom(rom_path);
     if (ret != OPRT_OK) {

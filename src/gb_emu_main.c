@@ -140,16 +140,18 @@ OPERATE_RET gb_emu_load_rom(const char *rom_path)
     // Browser is disabled, so canvas should already exist from gb_display_init()
     // Just make sure it's visible
     extern lv_obj_t *gb_canvas;
-    if (gb_canvas != NULL) {
+    extern lv_obj_t *gb_container;
+    if (gb_container != NULL && gb_canvas != NULL) {
         lv_vendor_disp_lock();
+        lv_obj_clear_flag(gb_container, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(gb_canvas, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(gb_canvas); // Bring to front
+        lv_obj_move_foreground(gb_container); // Bring container (and canvas) to front
         // Note: LVGL runs in its own thread, so we don't need to call lv_task_handler() here
         // Just unlock and let LVGL thread handle the rendering
         lv_vendor_disp_unlock();
-        PR_NOTICE("Canvas made visible");
+        PR_NOTICE("Canvas and container made visible");
     } else {
-        PR_ERR("Canvas is NULL - display may not be initialized");
+        PR_ERR("Canvas or container is NULL - display may not be initialized");
     }
 
     // Save ROM path
@@ -173,54 +175,23 @@ OPERATE_RET gb_emu_load_rom(const char *rom_path)
  * This should be called repeatedly from the main loop
  *
  * Extracted from SDL2-GNUBoy's emu_run() to run one frame at a time
+ * Optimized for faster loop execution without changing CPU cycles
  */
 void gb_emu_run(void)
 {
-    static int frame_count = 0;
-
-    // if (!gb_emu_running) {
-    // return;
-    // }
-
-    // Initialize frame rendering on first call (following SDL2-GNUBoy's emu_run())
-    // In SDL2: vid_begin() and lcd_begin() are called ONCE before the loop
-    // if (!frame_initialized) {
-    //     PR_NOTICE("Initializing frame rendering...");
-
-    //     // Verify that ROM is loaded and CPU is initialized
-    //     if (!gb_emu_running) {
-    //         PR_ERR("Cannot initialize frame rendering - ROM not loaded");
-    //         return;
-    //     }
-
-    //     // Verify framebuffer is set up
-    //     extern struct fb fb;
-    //     if (fb.ptr == NULL) {
-    //         PR_ERR("Cannot initialize frame rendering - framebuffer not initialized");
-    //         return;
-    //     }
-
-    //     // Clear browser UI and show canvas (with proper locking)
-    //     lv_vendor_disp_lock();
-    //     lv_obj_t *scr = lv_scr_act();
-    //     if (scr) {
-    //         lv_obj_clean(scr); // Clear browser UI
-    //     }
-    //     lv_vendor_disp_unlock();
-
-    //     // Following SDL2-GNUBoy: vid_begin() and lcd_begin() called ONCE before loop
-    //     vid_begin();
-    //     lcd_begin();
-    //     frame_initialized = true;
-    //     PR_NOTICE("Frame rendering initialized");
-    // }
+    // Cache register values to avoid repeated macro/register access
+    register byte ly;
+    register byte lcdc;
 
     // Start frame: emulate until we reach visible scanlines
     cpu_emulate(2280);
 
     // Draw visible scanlines (0-143)
-    while (R_LY > 0 && R_LY < 144) {
+    // Cache R_LY in register variable for faster access
+    ly = R_LY;
+    while (ly > 0 && ly < 144) {
         emu_step();
+        ly = R_LY; // Update cached value
     }
 
     // End of frame - update display, sound, RTC
@@ -229,28 +200,27 @@ void gb_emu_run(void)
     sound_mix();
     pcm_submit();
 
-    // Poll input (equivalent to doevents() in SDL2-GNUBoy)
-    // Note: In SDL2, doevents() is called here, which calls ev_poll()
-    ev_poll();
+    // Poll input and process events (equivalent to doevents() in SDL2-GNUBoy)
+    // doevents() calls ev_poll() to post events, then processes them via ev_getevent()
+    doevents();
 
     // Begin next frame
     vid_begin();
 
     // Handle LCD disabled case (LCD off)
-    if (!(R_LCDC & 0x80)) {
+    // Cache R_LCDC to avoid repeated access
+    lcdc = R_LCDC;
+    if (!(lcdc & 0x80)) {
         cpu_emulate(32832);
     }
 
     // Wait for next frame to start (LY resets to 0 at frame start)
     // This loop runs until we're at the start of the next frame
-    while (R_LY > 0) {
+    // Cache R_LY in register variable for faster access
+    ly = R_LY;
+    while (ly > 0) {
         emu_step();
-    }
-
-    // Debug: log every 60 frames (about 1 second at 60fps)
-    frame_count++;
-    if (frame_count % 60 == 0) {
-        PR_NOTICE("Emulator running: %d frames", frame_count);
+        ly = R_LY; // Update cached value
     }
 }
 

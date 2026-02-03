@@ -9,9 +9,57 @@
 #include "tal_api.h"
 #include "defs.h"
 #include "sys.h"
+#include "input.h"
+#include "hw.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+// Forward declarations
+extern void ev_poll(void);
+extern int  ev_getevent(event_t *ev);
+extern void io_recv(void);
+
+// Minimal rc_dokey implementation - directly maps key codes to pad_set()
+// This bypasses the RC system which is not needed for embedded builds
+void rc_dokey(int key, int st)
+{
+    byte pad_button = 0;
+
+    // Map key codes to PAD_* constants
+    switch (key) {
+    case K_JOYUP:
+        pad_button = PAD_UP;
+        break;
+    case K_JOYDOWN:
+        pad_button = PAD_DOWN;
+        break;
+    case K_JOYLEFT:
+        pad_button = PAD_LEFT;
+        break;
+    case K_JOYRIGHT:
+        pad_button = PAD_RIGHT;
+        break;
+    case K_JOY0:
+        pad_button = PAD_SELECT; // Physical SELECT → Game Boy SELECT
+        break;
+    case K_JOY1:
+        pad_button = PAD_B;
+        break;
+    case K_JOY2:
+        pad_button = PAD_A; // Physical A → Game Boy A
+        break;
+    case K_JOY3:
+        pad_button = PAD_START;
+        break;
+    default:
+        // Unknown key, ignore
+        return;
+    }
+
+    // Update Game Boy pad state
+    pad_set(pad_button, st);
+}
 
 // Timer implementation using Tuya's time API
 void *sys_timer(void)
@@ -26,11 +74,25 @@ void *sys_timer(void)
 // Note: sys_elapsed, sys_sleep, sys_checkdir, sys_initpath, sys_sanitize
 // are already implemented in gb_storage.c
 
-// Event handling - stub implementation
+// Event handling - matches SDL2 behavior
 void doevents(void)
 {
-    // Events are handled via gb_input_poll() in our adapter
-    // This is called from emu_run() but we handle events separately
+    event_t ev;
+    int     st;
+
+    // Poll for events (this calls ev_poll() which posts events to the queue)
+    ev_poll();
+
+    // Process all events from the queue
+    while (ev_getevent(&ev)) {
+        if (ev.type != EV_PRESS && ev.type != EV_RELEASE)
+            continue;
+        st = (ev.type != EV_RELEASE);
+        rc_dokey(ev.code, st);
+    }
+
+    // Handle I/O (like SDL2 does)
+    io_recv();
 }
 
 // Error handling - stub implementation

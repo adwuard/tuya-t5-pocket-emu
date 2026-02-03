@@ -24,7 +24,12 @@
 #define DISP_WIDTH  168
 #define DISP_HEIGHT 384
 
+// Border configuration
+#define DISPLAY_BORDER_WIDTH 3 // Border is 3px wide
+#define DISPLAY_BORDER_GAP   2 // 2px gap between display and border
+
 lv_obj_t   *gb_canvas           = NULL; // Made non-static so browser can hide/show it
+lv_obj_t   *gb_container        = NULL; // Container with border for the canvas
 lv_color_t *canvas_buffer       = NULL; // Made non-static so emulator can recreate canvas
 static bool display_initialized = false;
 
@@ -57,10 +62,32 @@ OPERATE_RET gb_display_init(void)
         return OPRT_MALLOC_FAILED;
     }
 
-    // Create LVGL canvas
-    gb_canvas = lv_canvas_create(scr);
+    // Create container with border for the canvas
+    gb_container = lv_obj_create(scr);
+    if (gb_container == NULL) {
+        PR_ERR("Failed to create container");
+        tal_free(canvas_buffer);
+        return OPRT_COM_ERROR;
+    }
+
+    // Set container size: canvas size + 2 * gap + 2 * border width
+    lv_obj_set_size(gb_container, GB_WIDTH + (DISPLAY_BORDER_GAP * 2) + (DISPLAY_BORDER_WIDTH * 2),
+                    GB_HEIGHT + (DISPLAY_BORDER_GAP * 2) + (DISPLAY_BORDER_WIDTH * 2));
+
+    // Set border style: 3px border, black color
+    lv_obj_set_style_border_width(gb_container, DISPLAY_BORDER_WIDTH, 0);
+    lv_obj_set_style_border_color(gb_container, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(gb_container, LV_OPA_TRANSP, 0);       // Transparent background
+    lv_obj_set_style_pad_all(gb_container, DISPLAY_BORDER_GAP, 0); // 2px padding creates gap between display and border
+
+    // Center container on screen
+    lv_obj_align(gb_container, LV_ALIGN_CENTER, 0, 0);
+
+    // Create LVGL canvas inside the container
+    gb_canvas = lv_canvas_create(gb_container);
     if (gb_canvas == NULL) {
         PR_ERR("Failed to create canvas");
+        lv_obj_del(gb_container);
         tal_free(canvas_buffer);
         return OPRT_COM_ERROR;
     }
@@ -69,11 +96,11 @@ OPERATE_RET gb_display_init(void)
     // LVGL v9 uses LV_COLOR_FORMAT_RGB565 instead of LV_IMG_CF_RGB565
     lv_canvas_set_buffer(gb_canvas, canvas_buffer, GB_WIDTH, GB_HEIGHT, LV_COLOR_FORMAT_RGB565);
 
-    // Center canvas on screen
-    lv_obj_align(gb_canvas, LV_ALIGN_CENTER, 0, 0);
-
     // Set canvas size
     lv_obj_set_size(gb_canvas, GB_WIDTH, GB_HEIGHT);
+
+    // Align canvas to center of container (border will be visible around it)
+    lv_obj_align(gb_canvas, LV_ALIGN_CENTER, 0, 0);
 
     display_initialized = true;
     PR_NOTICE("GB display initialized");
@@ -93,6 +120,11 @@ void gb_display_deinit(void)
     if (gb_canvas) {
         lv_obj_del(gb_canvas);
         gb_canvas = NULL;
+    }
+
+    if (gb_container) {
+        lv_obj_del(gb_container);
+        gb_container = NULL;
     }
 
     if (canvas_buffer) {
@@ -116,15 +148,21 @@ void gb_display_update(void)
     // Use lv_vendor_disp_lock/unlock for thread safety (like tuya_t5_pocket_ai)
     lv_vendor_disp_lock();
 
-    // Make sure canvas is visible (not hidden by browser UI)
-    lv_obj_clear_flag(gb_canvas, LV_OBJ_FLAG_HIDDEN);
+    // Make sure container and canvas are visible (not hidden by browser UI)
+    if (gb_container) {
+        lv_obj_clear_flag(gb_container, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (gb_canvas) {
+        lv_obj_clear_flag(gb_canvas, LV_OBJ_FLAG_HIDDEN);
+    }
 
-    // Ensure canvas is on the screen (might have been removed by browser)
+    // Ensure container is on the screen (might have been removed by browser)
     lv_obj_t *scr = lv_scr_act();
-    if (scr != NULL && lv_obj_get_parent(gb_canvas) != scr) {
-        lv_obj_set_parent(gb_canvas, scr);
-        lv_obj_align(gb_canvas, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_set_size(gb_canvas, GB_WIDTH, GB_HEIGHT);
+    if (scr != NULL && gb_container && lv_obj_get_parent(gb_container) != scr) {
+        lv_obj_set_parent(gb_container, scr);
+        lv_obj_align(gb_container, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_set_size(gb_container, GB_WIDTH + (DISPLAY_BORDER_GAP * 2) + (DISPLAY_BORDER_WIDTH * 2),
+                        GB_HEIGHT + (DISPLAY_BORDER_GAP * 2) + (DISPLAY_BORDER_WIDTH * 2));
     }
 
     // The framebuffer (fb.ptr) should point to canvas_buffer

@@ -15,12 +15,16 @@
 #include "sys.h"
 #include "sound.h"
 #include "pcm.h"
+#include <string.h>
 
-#define AUDIO_SAMPLE_RATE 44100
+// Hardware codec: 16-bit, 1 channel (mono), 16000 Hz
+#define AUDIO_SAMPLE_RATE 16000
 #define AUDIO_CHANNELS    1
+#define AUDIO_BITS        16 // 16-bit signed samples (converted from 8-bit unsigned)
 
 static bool               audio_initialized = false;
 static TDL_AUDIO_HANDLE_T audio_handle      = NULL;
+static bool               audio_started     = false;
 
 // GNUBoy PCM structure (defined here, declared extern in pcm.h)
 struct pcm pcm;
@@ -46,6 +50,10 @@ OPERATE_RET gb_audio_init(void)
         return ret;
     }
 
+    // Configure audio parameters before opening
+    // Note: Tuya audio codec may need to be configured via board API or Kconfig
+    // The actual sample rate might be set at hardware registration level
+
     // Open audio device (no mic callback needed for playback only)
     ret = tdl_audio_open(audio_handle, NULL);
     if (ret != OPRT_OK) {
@@ -59,11 +67,26 @@ OPERATE_RET gb_audio_init(void)
     if (ret == OPRT_OK) {
         PR_NOTICE("Audio info: rate=%d, ch=%d, bits=%d", audio_info.sample_rate, audio_info.sample_ch_num,
                   audio_info.sample_bits);
+
+        // Verify hardware codec matches expected configuration
+        if (audio_info.sample_rate != AUDIO_SAMPLE_RATE) {
+            PR_WARN("Audio sample rate mismatch: codec=%d Hz, expected=%d Hz", audio_info.sample_rate,
+                    AUDIO_SAMPLE_RATE);
+        }
+        if (audio_info.sample_ch_num != AUDIO_CHANNELS) {
+            PR_WARN("Audio channel mismatch: codec=%d, expected=%d", audio_info.sample_ch_num, AUDIO_CHANNELS);
+        }
+        if (audio_info.sample_bits != AUDIO_BITS) {
+            PR_WARN("Audio bit depth mismatch: codec=%d, expected=%d", audio_info.sample_bits, AUDIO_BITS);
+        }
+    } else {
+        PR_WARN("Could not get audio info, assuming default configuration");
     }
 #endif
 
     audio_initialized = true;
-    PR_NOTICE("GB audio initialized");
+    audio_started     = false;
+    PR_NOTICE("GB audio initialized (target rate: %d Hz)", AUDIO_SAMPLE_RATE);
 
     return OPRT_OK;
 }
@@ -94,47 +117,171 @@ void gb_audio_deinit(void)
 
 void pcm_init(void)
 {
-    // PCM initialization
-    // Audio system is already initialized by Tuya hardware registration
-    pcm.hz     = AUDIO_SAMPLE_RATE;
+    // PCM initialization - optimized for low latency
+    // Hardware codec: 16kHz, 16-bit, 1 channel (mono)
+    // Use smaller buffer for lower latency (reduces CPU cycles per frame)
+    // Smaller buffer = less data to process = lower latency
+
+    pcm.hz     = AUDIO_SAMPLE_RATE;  // 16000 Hz (hardware codec rate)
     pcm.stereo = AUDIO_CHANNELS - 1; // 0 = mono, 1 = stereo
-    pcm.len    = 1024;               // Buffer length in samples
-    pcm.pos    = 0;
-    // pcm.buf will be allocated by gnuboy's sound system
+
+    // Use smaller buffer for lower latency: samplerate / 120 (half of 60fps)
+    // At 16000 Hz: 16000 / 120 = 133 samples, round to 256 (next power of 2)
+    // This reduces processing time per frame and improves responsiveness
+    int samples = AUDIO_SAMPLE_RATE / 120;
+
+    // Round up to next power of 2 (like SDL2 does)
+    int i;
+    for (i = 1; i < samples; i <<= 1)
+        ;
+    samples = i;
+
+    pcm.len = samples;
+
+    // Allocate buffer for audio samples
+    // SDL2 uses AUDIO_U8 (unsigned 8-bit), so we allocate for 8-bit samples
+    // Buffer size in bytes: samples * channels * 1 byte per sample (unsigned 8-bit)
+    int channels = pcm.stereo ? 2 : 1;
+    int buf_size = pcm.len * channels * sizeof(byte); // 1 byte per sample (AUDIO_U8)
+
+    if (pcm.buf == NULL) {
+        pcm.buf = (byte *)tal_malloc(buf_size);
+        if (pcm.buf == NULL) {
+            PR_ERR("Failed to allocate PCM buffer (%d bytes)", buf_size);
+            pcm.len = 0;
+            return;
+        }
+        memset(pcm.buf, 0, buf_size);
+        PR_NOTICE("PCM buffer allocated: %d samples (%d bytes, 8-bit unsigned)", pcm.len, buf_size);
+    }
+
+    pcm.pos = 0;
+    PR_NOTICE("PCM initialized: rate=%d Hz, channels=%d, buffer=%d samples", pcm.hz, channels, pcm.len);
 }
 
 int pcm_submit(void)
 {
     // Submit audio samples to Tuya audio system
-    // This is called by gnuboy's sound system
-    // The sound system fills pcm.buf with audio data
+    // Following SDL2-GNUBoy pattern: wait for buffer to fill, then submit
+
+    if (!pcm.buf) {
+        static int warn_count = 0;
+        if (warn_count++ < 3) {
+            PR_WARN("pcm_submit: PCM buffer not allocated");
+        }
+        return 0;
+    }
+
+    // Wait for buffer to fill (like SDL2: if (pcm.pos < pcm.len) return 1;)
+    if (pcm.pos < pcm.len) {
+        return 1; // Buffer not full yet, keep filling
+    }
 
 #if defined(AUDIO_CODEC_NAME)
-    if (pcm.buf && pcm.pos > 0 && audio_handle) {
-        // Calculate bytes to write
-        int channels = pcm.stereo ? 2 : 1;
-        int bytes    = pcm.pos * channels * sizeof(int16_t);
-
-        // Write to Tuya audio using TDL audio API
-        OPERATE_RET ret = tdl_audio_play(audio_handle, (uint8_t *)pcm.buf, bytes);
-        if (ret != OPRT_OK) {
-            PR_ERR("Audio play failed: %d", ret);
+    if (!audio_handle) {
+        static int warn_count = 0;
+        if (warn_count++ < 3) {
+            PR_WARN("pcm_submit: Audio handle is NULL (audio not initialized?)");
         }
-
-        // Reset position
-        int samples = pcm.pos;
-        pcm.pos     = 0;
-        return samples;
+        pcm.pos = 0;
+        return 0;
     }
-    return 0;
+    // Convert from SDL2's AUDIO_U8 (unsigned 8-bit) format to 16-bit signed
+    // SDL2 format: samples are 0-255 (unsigned), center at 128
+    // Tuya format: samples are -32768 to 32767 (signed 16-bit)
+    // Conversion: (sample - 128) * 256
+
+    int channels           = pcm.stereo ? 2 : 1;
+    int samples_to_convert = pcm.len * channels;
+
+    // Allocate temporary buffer for converted samples (if needed)
+    // Or convert in-place if pcm.buf is large enough
+    static int16_t *converted_buf      = NULL;
+    static int      converted_buf_size = 0;
+
+    if (converted_buf_size < samples_to_convert) {
+        if (converted_buf) {
+            tal_free(converted_buf);
+        }
+        converted_buf = (int16_t *)tal_malloc(samples_to_convert * sizeof(int16_t));
+        if (converted_buf == NULL) {
+            PR_ERR("Failed to allocate converted audio buffer");
+            pcm.pos = 0;
+            return 0;
+        }
+        converted_buf_size = samples_to_convert;
+    }
+
+    // Convert from SDL2's AUDIO_U8 (unsigned 8-bit) to hardware codec format (signed 16-bit)
+    // SDL2 format: 0-255 (unsigned), center at 128
+    // Hardware codec: -32768 to 32767 (signed 16-bit), 16kHz, mono
+    // Optimized conversion: (sample - 128) * 256
+    // Use pointer arithmetic and unroll loop for better performance
+    byte    *src = pcm.buf;
+    int16_t *dst = converted_buf;
+    int      i   = 0;
+
+    // Process in chunks for better cache performance
+    for (; i < samples_to_convert - 3; i += 4) {
+        // Unroll 4 samples at a time
+        int s0     = (int)src[i] - 128;
+        int s1     = (int)src[i + 1] - 128;
+        int s2     = (int)src[i + 2] - 128;
+        int s3     = (int)src[i + 3] - 128;
+        dst[i]     = (int16_t)(s0 * 256);
+        dst[i + 1] = (int16_t)(s1 * 256);
+        dst[i + 2] = (int16_t)(s2 * 256);
+        dst[i + 3] = (int16_t)(s3 * 256);
+    }
+    // Handle remaining samples
+    for (; i < samples_to_convert; i++) {
+        int sample = (int)src[i] - 128;
+        dst[i]     = (int16_t)(sample * 256);
+    }
+
+    // Start audio playback on first submit (like SDL2)
+    if (!audio_started) {
+        // Audio should start automatically on first write, but we mark it as started
+        audio_started = true;
+        PR_NOTICE("Starting audio playback");
+    }
+
+    // Submit converted audio data to Tuya audio system
+    int         bytes = samples_to_convert * sizeof(int16_t);
+    OPERATE_RET ret   = tdl_audio_play(audio_handle, (uint8_t *)converted_buf, bytes);
+    if (ret != OPRT_OK) {
+        static int error_count = 0;
+        if (error_count++ < 5) {
+            PR_ERR("Audio play failed: %d (samples=%d, bytes=%d)", ret, samples_to_convert, bytes);
+        }
+        pcm.pos = 0;
+        return 0;
+    }
+
+    // Reset position for next buffer fill
+    pcm.pos = 0;
+    return 1; // Successfully submitted
 #else
+    // AUDIO_CODEC_NAME not defined - audio disabled
+    static int warn_count = 0;
+    if (warn_count++ < 1) {
+        PR_WARN("pcm_submit: AUDIO_CODEC_NAME not defined, audio disabled");
+    }
+    pcm.pos = 0;
     return 0;
 #endif
 }
 
 void pcm_close(void)
 {
-    // Close PCM (if needed)
+    // Free PCM buffer if allocated
+    if (pcm.buf) {
+        tal_free(pcm.buf);
+        pcm.buf = NULL;
+    }
+    pcm.len       = 0;
+    pcm.pos       = 0;
+    audio_started = false;
 }
 
 void pcm_pause(void)
